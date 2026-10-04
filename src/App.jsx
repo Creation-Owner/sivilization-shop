@@ -6,6 +6,7 @@ import GamesSection from "./components/GamesSection";
 import ShopSection from "./components/ShopSection";
 import LibrarySection from "./components/LibrarySection";
 import ProfileSection from "./components/ProfileSection";
+import AdminDashboard from "./components/AdminDashboard";
 
 function App() {
   const [email, setEmail] = useState("");
@@ -153,6 +154,9 @@ function App() {
           <button className={activeSection === "Games" ? "active" : ""} onClick={() => setActiveSection("Games")}>🎮 Games</button>
           <button className={activeSection === "Shop" ? "active" : ""} onClick={() => setActiveSection("Shop")}>🛒 Shop</button>
           <button className={activeSection === "Library" ? "active" : ""} onClick={() => setActiveSection("Library")}>📚 Library</button>
+          {isAdmin && (
+            <button className={activeSection === "Admin" ? "active" : ""} onClick={() => setActiveSection("Admin")}>👑 Admin</button>
+          )}
         </nav>
         <div className="top-actions">
           <input className="search-input" type="search" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -178,6 +182,7 @@ function App() {
       {activeSection === "Shop" && <ShopSection addToCart={addToCart} />}
       {activeSection === "Library" && <LibrarySection />}
       {activeSection === "Profile" && <ProfileSection email={user?.email} isAdmin={isAdmin} handleLogout={handleLogout} />}
+      {activeSection === "Admin" && isAdmin && <AdminDashboard />}
       {activeSection === "Cart" && (
         <section className="section-page">
           <h1 style={{color:"white",marginBottom:"20px"}}>🛒 Shopping Cart</h1>
