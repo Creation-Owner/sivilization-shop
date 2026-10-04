@@ -1,58 +1,120 @@
-const products = [
-  { title: "Premium Headphones", category: "Accessories", price: "$59.99", rating: "4.8", color: "#1e3a8a" },
-  { title: "Sivilization Hoodie", category: "Clothing", price: "$39.99", rating: "4.7", color: "#7c2d12" },
-  { title: "Digital Gift Card", category: "Digital", price: "$25.00", rating: "4.9", color: "#166534" },
-  { title: "Collector Poster", category: "Decor", price: "$14.99", rating: "4.6", color: "#581c87" },
-  { title: "Wireless Controller", category: "Gaming", price: "$49.99", rating: "4.8", color: "#0f766e" },
-  { title: "Movie Night Bundle", category: "Bundles", price: "$29.99", rating: "4.9", color: "#9f1239" },
-];
+import { useState } from "react";
 
-function ShopSection({ addToCart }) {
+export default function ShopSection() {
+  const [activeFilter, setActiveFilter] = useState("All");
+  const [cartCount, setCartCount] = useState(0);
+
+  const filters = ["All", "Electronics", "Fashion", "Home", "Accessories"];
+
+  const products = [
+    {
+      name: "Wireless Headphones",
+      category: "Electronics",
+      rating: 4.5,
+      price: 129.99,
+      color: "#2563eb",
+    },
+    {
+      name: "Smart Watch",
+      category: "Electronics",
+      rating: 4.7,
+      price: 199.99,
+      color: "#7c3aed",
+    },
+    {
+      name: "Designer Jacket",
+      category: "Fashion",
+      rating: 4.6,
+      price: 249.99,
+      color: "#dc2626",
+    },
+    {
+      name: "Minimalist Lamp",
+      category: "Home",
+      rating: 4.8,
+      price: 89.99,
+      color: "#059669",
+    },
+  ];
+
+  const filteredProducts =
+    activeFilter === "All"
+      ? products
+      : products.filter((p) => p.category === activeFilter);
+
+  function addToCart() {
+    setCartCount((c) => c + 1);
+  }
+
   return (
-    <section className="section-page">
-      <div className="shop-hero">
-        <div>
-          <p className="eyebrow">SIVILIZATION MARKET</p>
-          <h1>Everything you love, in one place.</h1>
-          <p>Shop digital products, entertainment accessories and exclusive Sivilization items.</p>
-          <button className="primary-action">Explore products</button>
+    <div className="media-page">
+      {/* Hero - Media style */}
+      <section className="media-hero">
+        <div className="media-hero-content">
+          <h1>Shop</h1>
+          <p className="media-hero-description">
+            Premium products curated for quality and style. From tech to fashion.
+          </p>
+          <div className="media-meta">
+            <span>2026</span>
+            <span>🛍️ Shopping</span>
+            <span>★ 4.6</span>
+          </div>
+          <div className="media-hero-actions">
+            <button className="media-watch-button">Browse All</button>
+            <button className="media-list-button">
+              Cart {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="shop-heading">
-        <div>
-          <p className="eyebrow">DISCOVER OUR COLLECTION</p>
-          <h2>Featured products</h2>
-        </div>
-      </div>
-      <div className="shop-filters">
-        <button className="selected">All products</button>
-        <button>Digital</button>
-        <button>Clothing</button>
-        <button>Gaming</button>
-        <button>Accessories</button>
-        <button>Bundles</button>
-      </div>
-      <div className="shop-grid">
-        {products.map((product) => (
-          <article className="shop-card" key={product.title} style={{ "--product-color": product.color }}>
-            <div className="shop-product-image">
-              <span className="product-category">{product.category}</span>
-              <button className="favorite-button" type="button">♡</button>
-            </div>
-            <div className="shop-card-body">
-              <div className="product-rating">★ {product.rating}</div>
-              <h3>{product.title}</h3>
-              <p>{product.category}</p>
-              <div className="shop-card-footer">
-                <strong>{product.price}</strong>
-                <button type="button" onClick={() => { addToCart(product); alert(`✅ ${product.title} added to cart!`); }}>Add to cart</button>
-              </div>
-            </div>
-          </article>
+      </section>
+
+      {/* Filters - Media style */}
+      <div className="media-categories">
+        {filters.map((f) => (
+          <button
+            key={f}
+            className={activeFilter === f ? "selected" : ""}
+            onClick={() => setActiveFilter(f)}
+          >
+            {f}
+          </button>
         ))}
       </div>
-    </section>
+
+      {/* Products Grid - Media style cards */}
+      <section className="media-row-section">
+        <div className="media-row-heading">
+          <h2>{activeFilter} Products</h2>
+          <button>View All</button>
+        </div>
+
+        <div className="media-film-grid">
+          {filteredProducts.map((product, idx) => (
+            <div key={idx} className="media-film-card">
+              <div
+                className="media-film-poster"
+                style={{ "--film-color": product.color }}
+              >
+                <div className="media-film-top">
+                  <span>{product.category}</span>
+                  <button className="media-save-button">♥</button>
+                </div>
+                <div className="media-film-bottom">
+                  <span>★ {product.rating}</span>
+                </div>
+                <button className="media-play-button" onClick={addToCart}>
+                  ▶
+                </button>
+              </div>
+              <div className="media-film-body">
+                <h3>{product.name}</h3>
+                <p>${product.price}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
-
-export default ShopSection;

@@ -1,55 +1,111 @@
-const games = [
-  { title: "Starfall Online", genre: "Action RPG", price: "$29.99", color: "#312e81", rating: "4.8" },
-  { title: "Racing Legends", genre: "Racing", price: "$19.99", color: "#9f1239", rating: "4.7" },
-  { title: "Kingdom Builders", genre: "Strategy", price: "$24.99", color: "#166534", rating: "4.9" },
-  { title: "Shadow Arena", genre: "Action", price: "$34.99", color: "#713f12", rating: "4.6" },
-];
+import { useState } from "react";
 
-function GamesSection() {
+export default function GamesSection() {
+  const [activeCategory, setActiveCategory] = useState("All");
+
+  const categories = ["All", "Action", "Adventure", "Strategy", "RPG"];
+
+  const games = [
+    {
+      title: "Cyber Odyssey",
+      genre: "Action",
+      rating: 4.8,
+      price: 59.99,
+      color: "#7c3aed",
+    },
+    {
+      title: "Mystic Realms",
+      genre: "Adventure",
+      rating: 4.6,
+      price: 49.99,
+      color: "#db2777",
+    },
+    {
+      title: "Empire Builder",
+      genre: "Strategy",
+      rating: 4.7,
+      price: 39.99,
+      color: "#059669",
+    },
+    {
+      title: "Dragon's Quest",
+      genre: "RPG",
+      rating: 4.9,
+      price: 54.99,
+      color: "#dc2626",
+    },
+  ];
+
+  const filteredGames =
+    activeCategory === "All"
+      ? games
+      : games.filter((g) => g.genre === activeCategory);
+
   return (
-    <section className="section-page">
-      <div className="games-hero">
-        <div>
-          <p className="eyebrow">DIGITAL ENTERTAINMENT</p>
-          <h1>Play something unforgettable.</h1>
-          <p>Discover new games, popular releases and exclusive offers.</p>
-          <button className="primary-action" onClick={() => alert("🎮 Browse all games feature coming soon!")}>Browse all games</button>
+    <div className="media-page">
+      {/* Hero - Media style */}
+      <section className="media-hero">
+        <div className="media-hero-content">
+          <h1>Games</h1>
+          <p className="media-hero-description">
+            Discover immersive worlds and epic adventures. From action-packed shooters to deep strategy games.
+          </p>
+          <div className="media-meta">
+            <span>2026</span>
+            <span>🎮 Gaming</span>
+            <span>★ 4.7</span>
+          </div>
+          <div className="media-hero-actions">
+            <button className="media-watch-button">Explore</button>
+            <button className="media-list-button">Top Rated</button>
+          </div>
         </div>
-      </div>
-      <div className="section-title-row">
-        <div>
-          <p className="eyebrow">EXPLORE THE COLLECTION</p>
-          <h2>Featured games</h2>
-        </div>
-        <button className="outline-action" onClick={() => alert("🎮 View all games feature coming soon!")}>View all</button>
-      </div>
-      <div className="category-tabs">
-        <button className="selected">All games</button>
-        <button>Action</button>
-        <button>Racing</button>
-        <button>Strategy</button>
-        <button>Adventure</button>
-      </div>
-      <div className="game-grid">
-        {games.map((game) => (
-          <article className="game-card" key={game.title} style={{ "--game-color": game.color }}>
-            <div className="game-cover">
-              <span className="game-genre">{game.genre}</span>
-              <span className="game-rating">★ {game.rating}</span>
-            </div>
-            <div className="game-card-body">
-              <h3>{game.title}</h3>
-              <p>{game.genre} game</p>
-              <div className="game-card-footer">
-                <strong>{game.price}</strong>
-                <button onClick={() => alert(`🎮 ${game.title} - Purchase feature coming soon!`)}>Buy now</button>
-              </div>
-            </div>
-          </article>
+      </section>
+
+      {/* Categories - Media style */}
+      <div className="media-categories">
+        {categories.map((cat) => (
+          <button
+            key={cat}
+            className={activeCategory === cat ? "selected" : ""}
+            onClick={() => setActiveCategory(cat)}
+          >
+            {cat}
+          </button>
         ))}
       </div>
-    </section>
+
+      {/* Games Grid - Media style cards */}
+      <section className="media-row-section">
+        <div className="media-row-heading">
+          <h2>{activeCategory} Games</h2>
+          <button>View All</button>
+        </div>
+
+        <div className="media-film-grid">
+          {filteredGames.map((game, idx) => (
+            <div key={idx} className="media-film-card">
+              <div
+                className="media-film-poster"
+                style={{ "--film-color": game.color }}
+              >
+                <div className="media-film-top">
+                  <span>{game.genre}</span>
+                  <button className="media-save-button">♥</button>
+                </div>
+                <div className="media-film-bottom">
+                  <span>★ {game.rating}</span>
+                </div>
+                <button className="media-play-button">▶</button>
+              </div>
+              <div className="media-film-body">
+                <h3>{game.title}</h3>
+                <p>${game.price}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
-
-export default GamesSection;
