@@ -45,7 +45,14 @@ function App() {
       }
     });
 
-    return () => subscription.unsubscribe();
+    // Listen for admin dashboard open event from profile
+    const handleOpenAdmin = () => setActiveSection("Admin");
+    window.addEventListener('open-admin-dashboard', handleOpenAdmin);
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('open-admin-dashboard', handleOpenAdmin);
+    };
   }, []);
 
   async function checkAdmin(userId) {
@@ -154,9 +161,6 @@ function App() {
           <button className={activeSection === "Games" ? "active" : ""} onClick={() => setActiveSection("Games")}>🎮 Games</button>
           <button className={activeSection === "Shop" ? "active" : ""} onClick={() => setActiveSection("Shop")}>🛒 Shop</button>
           <button className={activeSection === "Library" ? "active" : ""} onClick={() => setActiveSection("Library")}>📚 Library</button>
-          {isAdmin && (
-            <button className={activeSection === "Admin" ? "active" : ""} onClick={() => setActiveSection("Admin")}>👑 Admin</button>
-          )}
         </nav>
         <div className="top-actions">
           <input className="search-input" type="search" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />

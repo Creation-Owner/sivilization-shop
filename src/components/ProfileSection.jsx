@@ -10,7 +10,25 @@ function ProfileSection({ email, isAdmin, handleLogout }) {
           <p style={{ color: "#94a3b8", fontSize: "14px" }}>{isAdmin ? "👑 Administrator account" : "👤 Customer account"}</p>
         </div>
       </div>
+
       <div className="profile-settings">
+        {isAdmin && (
+          <button 
+            type="button" 
+            onClick={() => {
+              // Dispatch custom event to open admin dashboard
+              window.dispatchEvent(new CustomEvent('open-admin-dashboard'));
+            }}
+            style={{
+              background: "linear-gradient(135deg, #2563eb, #7c3aed)",
+              border: "1px solid #3b82f6",
+              color: "white",
+              fontWeight: "bold",
+            }}
+          >
+            👑 Admin Dashboard
+          </button>
+        )}
         <button type="button" onClick={() => alert("⚙️ Account settings coming soon!")}>⚙️ Account settings</button>
         <button type="button" onClick={() => alert("📦 Order history coming soon!")}>📦 Order history</button>
         <button type="button" onClick={() => alert("💳 Payment methods coming soon!")}>💳 Payment methods</button>
