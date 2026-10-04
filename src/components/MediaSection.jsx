@@ -1,169 +1,468 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
-import "./App.css";
+import AdminFilmUpload from "./AdminFilmUpload";
 
-export default function MediaSection() {
-  const [activeCategory, setActiveCategory] = useState("All");
-  const [search, setSearch] = useState("");
-  const [selectedVideo, setSelectedVideo] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const videoRef = useRef(null);
+const sampleFilms = [
+  {
+    title: "The Last Horizon",
+    genre: "Sci-Fi",
+    year: "2026",
+    duration: "2h 18m",
+    rating: "8.7",
+    color: "#172554",
+    progress: 72,
+    video_url:
+      "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+  },
+  {
+    title: "Midnight Streets",
+    genre: "Crime",
+    year: "2025",
+    duration: "1h 54m",
+    rating: "8.2",
+    color: "#3f1d2e",
+    progress: 45,
+    video_url:
+      "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+  },
+  {
+    title: "Beyond the Valley",
+    genre: "Adventure",
+    year: "2025",
+    duration: "2h 06m",
+    rating: "8.5",
+    color: "#14532d",
+    progress: 0,
+    video_url:
+      "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+  },
+  {
+    title: "Silent Echoes",
+    genre: "Mystery",
+    year: "2024",
+    duration: "1h 47m",
+    rating: "7.9",
+    color: "#422006",
+    progress: 0,
+  },
+  {
+    title: "The Blue Room",
+    genre: "Drama",
+    year: "2026",
+    duration: "1h 51m",
+    rating: "8.1",
+    color: "#164e63",
+    progress: 0,
+  },
+  {
+    title: "After the Storm",
+    genre: "Romance",
+    year: "2025",
+    duration: "1h 42m",
+    rating: "7.8",
+    color: "#831843",
+    progress: 0,
+  },
+];
 
-  const categories = ["All", "Action", "Drama", "Comedy", "Sci-Fi"];
+const categories = [
+  "All films",
+  "Trending",
+  "New releases",
+  "Action",
+  "Drama",
+  "Sci-Fi",
+  "Documentary",
+];
 
-  const films = [
-    { title: "Neon Nights", year: 2025, category: "Action", rating: 4.7, color: "#7c3aed", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
-    { title: "The Last Horizon", year: 2024, category: "Drama", rating: 4.8, color: "#db2777", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4" },
-    { title: "Quantum Leap", year: 2026, category: "Sci-Fi", rating: 4.9, color: "#059669", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" },
-    { title: "Laugh Out Loud", year: 2025, category: "Comedy", rating: 4.5, color: "#dc2626", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" },
-    { title: "Action Force", year: 2025, category: "Action", rating: 4.6, color: "#2563eb", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4" },
-    { title: "Deep Space", year: 2026, category: "Sci-Fi", rating: 4.7, color: "#7c3aed", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4" },
-  ];
+function getVideoUrl(videoPath) {
+  if (!videoPath) {
+    return null;
+  }
 
-  const filteredFilms = films.filter((film) => {
-    const matchesCategory = activeCategory === "All" || film.category === activeCategory;
-    const matchesSearch = search === "" || film.title.toLowerCase().includes(search.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  const { data } = supabase.storage
+    .from("films")
+    .getPublicUrl(videoPath);
 
-  const similarFilms = selectedVideo
-    ? films.filter((f) => f.category === selectedVideo.category && f.title !== selectedVideo.title)
+  return data?.publicUrl || null;
+}
+
+function convertDatabaseFilm(film) {
+  return {
+    id: film.id,
+    title: film.title,
+    description: film.description || "",
+    genre: film.genre || "Film",
+    year: film.release_year
+      ? String(film.release_year)
+      : "Unknown",
+    duration: film.duration || "Unknown",
+    rating: film.rating || "0",
+    color: "#172554",
+    progress: 0,
+    video_url: getVideoUrl(film.video_path),
+    video_path: film.video_path,
+    poster_path: film.poster_path,
+  };
+}
+
+function FilmCard({ film, showProgress = false, onPlay }) {
+  return (
+    <article
+      className="media-film-card"
+      style={{ "--film-color": film.color }}
+    >
+      <div className="media-film-poster">
+        <div className="media-film-top">
+          <span>{film.genre}</span>
+
+          <button
+            className="media-save-button"
+            type="button"
+            aria-label={`Save ${film.title}`}
+          >
+            ♡
+          </button>
+        </div>
+
+        <button
+          className="media-play-button"
+          type="button"
+          onClick={() => onPlay(film)}
+          aria-label={`Play ${film.title}`}
+        >
+          ▶
+        </button>
+
+        <div className="media-film-bottom">
+          <span>★ {film.rating}</span>
+          <span>{film.year}</span>
+        </div>
+      </div>
+
+      <div className="media-film-body">
+        <h3>{film.title}</h3>
+
+        <p>
+          {film.genre} · {film.duration}
+        </p>
+
+        {showProgress && (
+          <div className="media-progress-wrapper">
+            <div className="media-progress-track">
+              <div
+                className="media-progress-value"
+                style={{ width: `${film.progress}%` }}
+              />
+            </div>
+
+            <span>{film.progress}% watched</span>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function MediaRow({
+  title,
+  subtitle,
+  items,
+  showProgress = false,
+  onPlay,
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="media-row-section">
+      <div className="media-row-heading">
+        <div>
+          <p className="eyebrow">{subtitle}</p>
+          <h2>{title}</h2>
+        </div>
+
+        <button type="button">View all</button>
+      </div>
+
+      <div className="media-film-grid">
+        {items.map((film) => (
+          <FilmCard
+            key={film.id || film.title}
+            film={film}
+            showProgress={showProgress}
+            onPlay={onPlay}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MediaSection() {
+  const [allFilms, setAllFilms] = useState(sampleFilms);
+  const [selectedFilm, setSelectedFilm] = useState(null);
+  const [selectedCategory, setSelectedCategory] =
+    useState("All films");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loadingFilms, setLoadingFilms] = useState(true);
+  const [filmsError, setFilmsError] = useState("");
+  const videoPlayerRef = useRef(null);
+
+  useEffect(() => {
+    async function loadUserAndFilms() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        const { data: profile, error: profileError } =
+          await supabase
+            .from("profiles")
+            .select("is_admin")
+            .eq("id", user.id)
+            .maybeSingle();
+
+        if (profileError) {
+          console.error(
+            "Could not check admin status:",
+            profileError
+          );
+          setIsAdmin(false);
+        } else {
+          setIsAdmin(profile?.is_admin === true);
+        }
+      } else {
+        setIsAdmin(false);
+      }
+
+      const { data: databaseFilms, error: filmsError } =
+        await supabase
+          .from("films")
+          .select("*")
+          .order("created_at", {
+            ascending: false,
+          });
+
+      if (filmsError) {
+        console.error("Could not load films:", filmsError);
+        setFilmsError(filmsError.message);
+        setLoadingFilms(false);
+        return;
+      }
+
+      const convertedFilms = (databaseFilms || []).map(
+        convertDatabaseFilm
+      );
+
+      setAllFilms([...convertedFilms, ...sampleFilms]);
+      setLoadingFilms(false);
+    }
+
+    loadUserAndFilms();
+  }, []);
+
+  const filteredFilms =
+    selectedCategory === "All films"
+      ? allFilms
+      : selectedCategory === "New releases"
+        ? allFilms.filter((film) => film.year === "2026")
+        : allFilms.filter(
+            (film) => film.genre === selectedCategory
+          );
+
+  const continueWatching = filteredFilms.filter(
+    (film) => Number(film.progress) > 0
+  );
+
+  const newReleases = filteredFilms.filter(
+    (film) => film.year === "2026"
+  );
+
+  const recommended = filteredFilms.filter(
+    (film) => Number(film.rating) >= 8.1
+  );
+
+  const sameGenreFilms = selectedFilm
+    ? allFilms.filter(
+        (film) =>
+          film.genre === selectedFilm.genre &&
+          (film.id ? film.id !== selectedFilm.id : film.title !== selectedFilm.title)
+      )
     : [];
 
-  function openVideo(film) {
-    if (videoRef.current) {
-      videoRef.current.pause();
+  function handleWatchFeatured() {
+    const featuredFilm = allFilms.find(
+      (film) => film.title === "The Last Horizon"
+    );
+
+    if (featuredFilm) {
+      setSelectedFilm(featuredFilm);
     }
-    setSelectedVideo(film);
-    setIsPlaying(false);
   }
 
-  function closeVideo() {
-    if (videoRef.current) {
-      videoRef.current.pause();
-    }
-    setSelectedVideo(null);
-    setIsPlaying(false);
-  }
+  function handleVideoPlayerClick() {
+    const videoElement = videoPlayerRef.current;
+    if (!videoElement) return;
 
-  function handleVideoClick() {
-    if (!videoRef.current) return;
-    if (isPlaying) {
-      videoRef.current.pause();
-      setIsPlaying(false);
+    if (videoElement.paused) {
+      videoElement.play();
     } else {
-      videoRef.current.play();
-      setIsPlaying(true);
+      videoElement.pause();
     }
   }
 
   return (
-    <div className="media-page">
-      <section className="media-hero">
+    <section className="media-page section-page">
+      <div className="media-hero">
         <div className="media-hero-content">
-          <h1>Films, Cartoons & Dramas</h1>
-          <p className="media-hero-description">Stream the latest movies and shows. From action blockbusters to heartfelt dramas.</p>
+          <p className="eyebrow">FEATURED FILM</p>
+
+          <h1>The Last Horizon</h1>
+
           <div className="media-meta">
             <span>2026</span>
-            <span>🎬 Cinema</span>
-            <span>★ 4.7</span>
+            <span>2h 18m</span>
+            <span>★ 8.7</span>
+            <span>Sci-Fi</span>
           </div>
+
+          <p className="media-hero-description">
+            Humanity has one final chance to reach a distant world
+            before Earth becomes uninhabitable.
+          </p>
+
           <div className="media-hero-actions">
-            <button className="media-watch-button">Watch Now</button>
-            <button className="media-list-button">My List</button>
+            <button
+              className="media-watch-button"
+              type="button"
+              onClick={handleWatchFeatured}
+            >
+              ▶ Watch now
+            </button>
+
+            <button
+              className="media-list-button"
+              type="button"
+            >
+              + Add to list
+            </button>
           </div>
         </div>
-      </section>
-
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24 }}>
-        <input
-          className="search-input"
-          type="search"
-          placeholder="Search titles"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: 1, border: "1px solid #334155", borderRadius: 8, padding: "10px 14px", background: "#101c2e", color: "#cbd5e1", outline: "none" }}
-        />
       </div>
 
       <div className="media-categories">
-        {categories.map((cat) => (
-          <button key={cat} className={activeCategory === cat ? "selected" : ""} onClick={() => setActiveCategory(cat)}>{cat}</button>
+        {categories.map((category) => (
+          <button
+            key={category}
+            className={
+              selectedCategory === category
+                ? "selected"
+                : ""
+            }
+            type="button"
+            onClick={() => setSelectedCategory(category)}
+          >
+            {category}
+          </button>
         ))}
       </div>
 
-      <section className="media-row-section">
-        <div className="media-row-heading">
-          <h2>{activeCategory} Films</h2>
-          <button>View All</button>
-        </div>
-        <div className="media-film-grid">
-          {filteredFilms.map((film, idx) => (
-            <div key={idx} className="media-film-card">
-              <div className="media-film-poster" style={{ "--film-color": film.color }}>
-                <div className="media-film-top">
-                  <span>{film.category}</span>
-                  <button className="media-save-button">♥</button>
-                </div>
-                <div className="media-film-bottom">
-                  <span>★ {film.rating}</span>
-                </div>
-                <button className="media-play-button" onClick={() => openVideo(film)}>▶</button>
-              </div>
-              <div className="media-film-body">
-                <h3>{film.title}</h3>
-                <p>{film.year}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {loadingFilms && (
+        <p className="media-status">Loading uploaded films...</p>
+      )}
 
-      {selectedVideo && (
-        <div className="video-modal" onClick={closeVideo}>
-          <div className="video-modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="video-modal-close" onClick={closeVideo}>✕</button>
-            <h2>{selectedVideo.title}</h2>
-            <video
-              ref={videoRef}
-              className="media-video-player"
-              src={selectedVideo.videoUrl}
-              controls
-              onClick={handleVideoClick}
-            />
+      {filmsError && (
+        <p className="media-status media-error">
+          Database films could not be loaded: {filmsError}
+        </p>
+      )}
 
-            {similarFilms.length > 0 && (
-              <div style={{ marginTop: 24 }}>
-                <h3 style={{ color: "white", marginBottom: 12 }}>More {selectedVideo.category} Films</h3>
-                <div className="poster-row" style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 8 }}>
-                  {similarFilms.map((film, idx) => (
-                    <div
-                      key={idx}
-                      className="poster-card"
-                      style={{ minWidth: 155, flex: "0 0 155px", cursor: "pointer" }}
-                      onClick={() => openVideo(film)}
-                    >
-                      <div
-                        className="poster-art"
-                        style={{
-                          height: 230,
-                          display: "flex",
-                          alignItems: "flex-end",
-                          justifyContent: "space-between",
-                          padding: 12,
-                          background: `linear-gradient(150deg, ${film.color}, #111827)`,
-                          borderRadius: 9,
-                          boxShadow: "0 12px 26px rgba(0,0,0,0.35)",
-                        }}
-                      >
-                        <span className="poster-type">{film.category}</span>
-                        <span className="poster-rating">★ {film.rating}</span>
-                      </div>
-                      <h3 style={{ color: "white", fontSize: 15, margin: "10px 0 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {film.title}
-                      </h3>
-                      <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>{film.year}</p>
-                    </div>
+      <MediaRow
+        title="Continue watching"
+        subtitle="Pick up where you left off"
+        items={continueWatching}
+        showProgress
+        onPlay={setSelectedFilm}
+      />
+
+      <MediaRow
+        title="New releases"
+        subtitle="Fresh stories worth watching"
+        items={newReleases}
+        onPlay={setSelectedFilm}
+      />
+
+      <MediaRow
+        title="Recommended for you"
+        subtitle="Based on your viewing history"
+        items={recommended}
+        onPlay={setSelectedFilm}
+      />
+
+      {isAdmin && <AdminFilmUpload />}
+
+      {selectedFilm && (
+        <div
+          className="video-modal"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedFilm(null);
+            }
+          }}
+        >
+          <div className="video-modal-content">
+            <button
+              className="video-modal-close"
+              type="button"
+              onClick={() => setSelectedFilm(null)}
+              aria-label="Close video player"
+            >
+              ×
+            </button>
+
+            <h2>{selectedFilm.title}</h2>
+
+            {selectedFilm.video_url ? (
+              <>
+                <video
+                  ref={videoPlayerRef}
+                  className="media-video-player"
+                  src={selectedFilm.video_url}
+                  controls
+                  autoPlay
+                  onClick={handleVideoPlayerClick}
+                  style={{ cursor: "pointer" }}
+                />
+                <p className="video-hint" style={{ color: "#94a3b8", fontSize: "12px", margin: "8px 0 16px" }}>
+                  Tip: Click anywhere on the video screen to play or pause.
+                </p>
+              </>
+            ) : (
+              <p className="video-not-available">
+                This film does not have a video uploaded yet.
+              </p>
+            )}
+
+            {sameGenreFilms.length > 0 && (
+              <div className="video-modal-recommendations" style={{ marginTop: "24px", textAlign: "left" }}>
+                <h3 style={{ color: "#ffffff", fontSize: "18px", marginBottom: "14px" }}>
+                  More {selectedFilm.genre} films
+                </h3>
+                <div
+                  className="media-film-grid"
+                  style={{
+                    gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
+                    gap: "14px",
+                  }}
+                >
+                  {sameGenreFilms.map((film) => (
+                    <FilmCard
+                      key={film.id || film.title}
+                      film={film}
+                      onPlay={setSelectedFilm}
+                    />
                   ))}
                 </div>
               </div>
@@ -171,6 +470,8 @@ export default function MediaSection() {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
+
+export default MediaSection;
