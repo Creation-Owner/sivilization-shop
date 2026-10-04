@@ -16,6 +16,8 @@ export default function MediaSection() {
     { title: "The Last Horizon", year: 2024, category: "Drama", rating: 4.8, color: "#db2777", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4" },
     { title: "Quantum Leap", year: 2026, category: "Sci-Fi", rating: 4.9, color: "#059669", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" },
     { title: "Laugh Out Loud", year: 2025, category: "Comedy", rating: 4.5, color: "#dc2626", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" },
+    { title: "Action Force", year: 2025, category: "Action", rating: 4.6, color: "#2563eb", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4" },
+    { title: "Deep Space", year: 2026, category: "Sci-Fi", rating: 4.7, color: "#7c3aed", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4" },
   ];
 
   const filteredFilms = films.filter((film) => {
@@ -24,7 +26,14 @@ export default function MediaSection() {
     return matchesCategory && matchesSearch;
   });
 
+  const similarFilms = selectedVideo
+    ? films.filter((f) => f.category === selectedVideo.category && f.title !== selectedVideo.title)
+    : [];
+
   function openVideo(film) {
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
     setSelectedVideo(film);
     setIsPlaying(false);
   }
@@ -122,6 +131,43 @@ export default function MediaSection() {
               controls
               onClick={handleVideoClick}
             />
+
+            {similarFilms.length > 0 && (
+              <div style={{ marginTop: 24 }}>
+                <h3 style={{ color: "white", marginBottom: 12 }}>More {selectedVideo.category} Films</h3>
+                <div className="poster-row" style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 8 }}>
+                  {similarFilms.map((film, idx) => (
+                    <div
+                      key={idx}
+                      className="poster-card"
+                      style={{ minWidth: 155, flex: "0 0 155px", cursor: "pointer" }}
+                      onClick={() => openVideo(film)}
+                    >
+                      <div
+                        className="poster-art"
+                        style={{
+                          height: 230,
+                          display: "flex",
+                          alignItems: "flex-end",
+                          justifyContent: "space-between",
+                          padding: 12,
+                          background: `linear-gradient(150deg, ${film.color}, #111827)`,
+                          borderRadius: 9,
+                          boxShadow: "0 12px 26px rgba(0,0,0,0.35)",
+                        }}
+                      >
+                        <span className="poster-type">{film.category}</span>
+                        <span className="poster-rating">★ {film.rating}</span>
+                      </div>
+                      <h3 style={{ color: "white", fontSize: 15, margin: "10px 0 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {film.title}
+                      </h3>
+                      <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>{film.year}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
