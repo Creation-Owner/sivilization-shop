@@ -41,20 +41,11 @@ function FilmCard({ film, onWatch }) {
           backgroundPosition: "center",
         } : undefined}
       >
-        <span className="media-film-top">
-          <span>{film.genre}</span>
-          <span className="media-save-button" aria-hidden="true">♡</span>
-        </span>
+        <span className="media-film-top"><span>{film.genre}</span><span className="media-save-button" aria-hidden="true">♡</span></span>
         <span className="media-card-play" aria-hidden="true">▶</span>
-        <span className="media-film-bottom">
-          <span>★ {film.rating}</span>
-          <span>{film.year}</span>
-        </span>
+        <span className="media-film-bottom"><span>★ {film.rating}</span><span>{film.year}</span></span>
       </button>
-      <div className="media-film-body">
-        <h3>{film.title}</h3>
-        <p>{film.genre} · {film.duration}</p>
-      </div>
+      <div className="media-film-body"><h3>{film.title}</h3><p>{film.genre} · {film.duration}</p></div>
     </article>
   );
 }
@@ -63,15 +54,8 @@ function MediaRow({ title, subtitle, items, onWatch }) {
   if (!items.length) return null;
   return (
     <section className="media-row-section">
-      <div className="media-row-heading">
-        <div>
-          <p className="eyebrow">{subtitle}</p>
-          <h2>{title}</h2>
-        </div>
-      </div>
-      <div className="media-film-grid">
-        {items.map((film) => <FilmCard key={film.id} film={film} onWatch={onWatch} />)}
-      </div>
+      <div className="media-row-heading"><div><p className="eyebrow">{subtitle}</p><h2>{title}</h2></div></div>
+      <div className="media-film-grid">{items.map((film) => <FilmCard key={film.id} film={film} onWatch={onWatch} />)}</div>
     </section>
   );
 }
@@ -99,52 +83,21 @@ function WatchPage({ film, onBack }) {
 
   return (
     <section className="watch-page section-page">
-      <button className="watch-back-button" type="button" onClick={onBack}>
-        ← Back to Media
-      </button>
-
+      <button className="watch-back-button" type="button" onClick={onBack}>← Back to Media</button>
       <div className="watch-layout">
         <div className="watch-player-shell">
-          {film.video_url ? (
-            <>
-              <video
-                ref={videoRef}
-                className="watch-video"
-                src={film.video_url}
-                controls
-                playsInline
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onError={() => setVideoError("This video could not be loaded. Check the uploaded file and storage policy.")}
-                onClick={togglePlayback}
-              />
-              {!isPlaying && !videoError && (
-                <button className="watch-play-overlay" type="button" onClick={playVideo}>
-                  <span>▶</span>
-                  <small>Click to play</small>
-                </button>
-              )}
-            </>
-          ) : (
-            <div className="watch-unavailable">This film does not have a video file yet.</div>
-          )}
+          {film.video_url ? <>
+            <video ref={videoRef} className="watch-video" src={film.video_url} controls playsInline onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onError={() => setVideoError("This video could not be loaded. Check the uploaded file and storage policy.")} onClick={togglePlayback} />
+            {!isPlaying && !videoError && <button className="watch-play-overlay" type="button" onClick={playVideo}><span>▶</span><small>Click to play</small></button>}
+          </> : <div className="watch-unavailable">This film does not have a video file yet.</div>}
         </div>
-
         {videoError && <p className="watch-error">{videoError}</p>}
-
         <div className="watch-details">
           <p className="eyebrow">NOW WATCHING</p>
           <h1>{film.title}</h1>
-          <div className="media-meta">
-            <span>{film.year}</span>
-            <span>{film.duration}</span>
-            <span>★ {film.rating}</span>
-            <span>{film.genre}</span>
-          </div>
+          <div className="media-meta"><span>{film.year}</span><span>{film.duration}</span><span>★ {film.rating}</span><span>{film.genre}</span></div>
           <p>{film.description}</p>
-          <button className="watch-play-button" type="button" onClick={playVideo} disabled={!film.video_url}>
-            ▶ Play film
-          </button>
+          <button className="watch-play-button" type="button" onClick={playVideo} disabled={!film.video_url}>▶ Play film</button>
         </div>
       </div>
     </section>
@@ -161,17 +114,9 @@ function MediaSection() {
   useEffect(() => {
     async function loadFilms() {
       setLoading(true);
-      const { data, error: filmsError } = await supabase
-        .from("films")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (filmsError) {
-        setError(filmsError.message);
-      } else {
-        setUploadedFilms((data || []).map(convertFilm));
-        setError("");
-      }
+      const { data, error: filmsError } = await supabase.from("films").select("*").order("created_at", { ascending: false });
+      if (filmsError) setError(filmsError.message);
+      else { setUploadedFilms((data || []).map(convertFilm)); setError(""); }
       setLoading(false);
     }
     loadFilms();
@@ -194,32 +139,8 @@ function MediaSection() {
 
   return (
     <section className="media-page section-page">
-      <div className="media-hero">
-        <div className="media-hero-content">
-          <p className="eyebrow">FEATURED FILM</p>
-          <h1>{featured.title}</h1>
-          <div className="media-meta">
-            <span>{featured.year}</span>
-            <span>{featured.duration}</span>
-            <span>★ {featured.rating}</span>
-            <span>{featured.genre}</span>
-          </div>
-          <p className="media-hero-description">{featured.description}</p>
-          <div className="media-hero-actions">
-            <button className="media-watch-button" type="button" onClick={() => setWatchingFilm(featured)}>▶ Watch now</button>
-            <button className="media-list-button" type="button" onClick={() => alert("Added to your list.")}>+ Add to list</button>
-          </div>
-        </div>
-      </div>
-
-      <div className="media-categories">
-        {categories.map((category) => (
-          <button key={category} className={selectedCategory === category ? "selected" : ""} type="button" onClick={() => setSelectedCategory(category)}>
-            {category}
-          </button>
-        ))}
-      </div>
-
+      <div className="media-hero"><div className="media-hero-content"><p className="eyebrow">FEATURED FILM</p><h1>{featured.title}</h1><div className="media-meta"><span>{featured.year}</span><span>{featured.duration}</span><span>★ {featured.rating}</span><span>{featured.genre}</span></div><p className="media-hero-description">{featured.description}</p><div className="media-hero-actions"><button className="media-watch-button" type="button" onClick={() => setWatchingFilm(featured)}>▶ Watch now</button><button className="media-list-button" type="button" onClick={() => alert("Added to your list.")}>+ Add to list</button></div></div></div>
+      <div className="media-categories">{categories.map((category) => <button key={category} className={selectedCategory === category ? "selected" : ""} type="button" onClick={() => setSelectedCategory(category)}>{category}</button>)}</div>
       {loading && <p className="media-status">Loading uploaded films…</p>}
       {error && <p className="media-status media-error">Could not load uploaded films: {error}</p>}
       {!loading && visibleUploads.length > 0 && <MediaRow title="Your uploaded films" subtitle="Added through your Admin Dashboard" items={visibleUploads} onWatch={setWatchingFilm} />}
