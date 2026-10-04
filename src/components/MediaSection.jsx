@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import AdminFilmUpload from "./AdminFilmUpload";
+import "../App.css";
 
 const sampleFilms = [
   {
@@ -75,10 +76,12 @@ const categories = [
   "Documentary",
 ];
 
+function filmKey(film) {
+  return String(film.id || film.title);
+}
+
 function getVideoUrl(videoPath) {
-  if (!videoPath) {
-    return null;
-  }
+  if (!videoPath) return null;
 
   const { data } = supabase.storage
     .from("films")
@@ -106,7 +109,13 @@ function convertDatabaseFilm(film) {
   };
 }
 
-function FilmCard({ film, showProgress = false, onPlay }) {
+function FilmCard({
+  film,
+  showProgress = false,
+  onPlay,
+  onToggleSaved,
+  isSaved = false,
+}) {
   return (
     <article
       className="media-film-card"
@@ -117,11 +126,16 @@ function FilmCard({ film, showProgress = false, onPlay }) {
           <span>{film.genre}</span>
 
           <button
-            className="media-save-button"
+            className={`media-save-button ${isSaved ? "saved" : ""}`}
             type="button"
-            aria-label={`Save ${film.title}`}
+            onClick={() => onToggleSaved?.(film)}
+            aria-label={
+              isSaved
+                ? `Remove ${film.title} from My List`
+                : `Save ${film.title} to My List`
+            }
           >
-            ♡
+            {isSaved ? "♥" : "♡"}
           </button>
         </div>
 
@@ -142,7 +156,6 @@ function FilmCard({ film, showProgress = false, onPlay }) {
 
       <div className="media-film-body">
         <h3>{film.title}</h3>
-
         <p>
           {film.genre} · {film.duration}
         </p>
@@ -155,7 +168,6 @@ function FilmCard({ film, showProgress = false, onPlay }) {
                 style={{ width: `${film.progress}%` }}
               />
             </div>
-
             <span>{film.progress}% watched</span>
           </div>
         )}
@@ -170,10 +182,10 @@ function MediaRow({
   items,
   showProgress = false,
   onPlay,
+  onToggleSaved,
+  savedFilmKeys,
 }) {
-  if (items.length === 0) {
-    return null;
-  }
+  if (items.length === 0) return null;
 
   return (
     <section className="media-row-section">
@@ -182,17 +194,18 @@ function MediaRow({
           <p className="eyebrow">{subtitle}</p>
           <h2>{title}</h2>
         </div>
-
         <button type="button">View all</button>
       </div>
 
       <div className="media-film-grid">
         {items.map((film) => (
           <FilmCard
-            key={film.id || film.title}
+            key={filmKey(film)}
             film={film}
             showProgress={showProgress}
             onPlay={onPlay}
+            onToggleSaved={onToggleSaved}
+            isSaved={savedFilmKeys.has(filmKey(film))}
           />
         ))}
       </div>
@@ -208,6 +221,8 @@ function MediaSection() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loadingFilms, setLoadingFilms] = useState(true);
   const [filmsError, setFilmsError] = useState("");
+  const [savedFilmKeys, setSavedFilmKeys] = useState(() => new Set());
+
   const videoPlayerRef = useRef(null);
 
   useEffect(() => {
@@ -237,17 +252,15 @@ function MediaSection() {
         setIsAdmin(false);
       }
 
-      const { data: databaseFilms, error: filmsError } =
+      const { data: databaseFilms, error: loadError } =
         await supabase
           .from("films")
           .select("*")
-          .order("created_at", {
-            ascending: false,
-          });
+          .order("created_at", { ascending: false });
 
-      if (filmsError) {
-        console.error("Could not load films:", filmsError);
-        setFilmsError(filmsError.message);
+      if (loadError) {
+        console.error("Could not load films:", loadError);
+        setFilmsError(loadError.message);
         setLoadingFilms(false);
         return;
       }
@@ -268,9 +281,13 @@ function MediaSection() {
       ? allFilms
       : selectedCategory === "New releases"
         ? allFilms.filter((film) => film.year === "2026")
-        : allFilms.filter(
-            (film) => film.genre === selectedCategory
-          );
+        : selectedCategory === "Trending"
+          ? allFilms.filter(
+              (film) => Number(film.rating) >= 8.1
+            )
+          : allFilms.filter(
+              (film) => film.genre === selectedCategory
+            );
 
   const continueWatching = filteredFilms.filter(
     (film) => Number(film.progress) > 0
@@ -284,13 +301,37 @@ function MediaSection() {
     (film) => Number(film.rating) >= 8.1
   );
 
+  const savedFilms = useMemo(
+    () =>
+      allFilms.filter((film) =>
+        savedFilmKeys.has(filmKey(film))
+      ),
+    [allFilms, savedFilmKeys]
+  );
+
   const sameGenreFilms = selectedFilm
     ? allFilms.filter(
         (film) =>
           film.genre === selectedFilm.genre &&
-          (film.id ? film.id !== selectedFilm.id : film.title !== selectedFilm.title)
+          filmKey(film) !== filmKey(selectedFilm)
       )
     : [];
+
+  function toggleSavedFilm(film) {
+    const key = filmKey(film);
+
+    setSavedFilmKeys((previousKeys) => {
+      const nextKeys = new Set(previousKeys);
+
+      if (nextKeys.has(key)) {
+        nextKeys.delete(key);
+      } else {
+        nextKeys.add(key);
+      }
+
+      return nextKeys;
+    });
+  }
 
   function handleWatchFeatured() {
     const featuredFilm = allFilms.find(
@@ -302,15 +343,39 @@ function MediaSection() {
     }
   }
 
-  function handleVideoPlayerClick() {
-    const videoElement = videoPlayerRef.current;
-    if (!videoElement) return;
+  function handleAddFeaturedToList() {
+    const featuredFilm = allFilms.find(
+      (film) => film.title === "The Last Horizon"
+    );
 
-    if (videoElement.paused) {
-      videoElement.play();
-    } else {
-      videoElement.pause();
+    if (featuredFilm) {
+      setSavedFilmKeys((previousKeys) => {
+        const nextKeys = new Set(previousKeys);
+        nextKeys.add(filmKey(featuredFilm));
+        return nextKeys;
+      });
     }
+  }
+
+  function closeVideoModal() {
+    videoPlayerRef.current?.pause();
+    setSelectedFilm(null);
+  }
+
+  function handleVideoPlayerClick() {
+    const player = videoPlayerRef.current;
+    if (!player) return;
+
+    if (player.paused) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }
+
+  function handleSelectRecommendation(film) {
+    videoPlayerRef.current?.pause();
+    setSelectedFilm(film);
   }
 
   return (
@@ -318,7 +383,6 @@ function MediaSection() {
       <div className="media-hero">
         <div className="media-hero-content">
           <p className="eyebrow">FEATURED FILM</p>
-
           <h1>The Last Horizon</h1>
 
           <div className="media-meta">
@@ -345,6 +409,7 @@ function MediaSection() {
             <button
               className="media-list-button"
               type="button"
+              onClick={handleAddFeaturedToList}
             >
               + Add to list
             </button>
@@ -357,9 +422,7 @@ function MediaSection() {
           <button
             key={category}
             className={
-              selectedCategory === category
-                ? "selected"
-                : ""
+              selectedCategory === category ? "selected" : ""
             }
             type="button"
             onClick={() => setSelectedCategory(category)}
@@ -385,6 +448,8 @@ function MediaSection() {
         items={continueWatching}
         showProgress
         onPlay={setSelectedFilm}
+        onToggleSaved={toggleSavedFilm}
+        savedFilmKeys={savedFilmKeys}
       />
 
       <MediaRow
@@ -392,6 +457,8 @@ function MediaSection() {
         subtitle="Fresh stories worth watching"
         items={newReleases}
         onPlay={setSelectedFilm}
+        onToggleSaved={toggleSavedFilm}
+        savedFilmKeys={savedFilmKeys}
       />
 
       <MediaRow
@@ -399,6 +466,17 @@ function MediaSection() {
         subtitle="Based on your viewing history"
         items={recommended}
         onPlay={setSelectedFilm}
+        onToggleSaved={toggleSavedFilm}
+        savedFilmKeys={savedFilmKeys}
+      />
+
+      <MediaRow
+        title="My List"
+        subtitle="Saved for later"
+        items={savedFilms}
+        onPlay={setSelectedFilm}
+        onToggleSaved={toggleSavedFilm}
+        savedFilmKeys={savedFilmKeys}
       />
 
       {isAdmin && <AdminFilmUpload />}
@@ -408,7 +486,7 @@ function MediaSection() {
           className="video-modal"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
-              setSelectedFilm(null);
+              closeVideoModal();
             }
           }}
         >
@@ -416,7 +494,7 @@ function MediaSection() {
             <button
               className="video-modal-close"
               type="button"
-              onClick={() => setSelectedFilm(null)}
+              onClick={closeVideoModal}
               aria-label="Close video player"
             >
               ×
@@ -435,8 +513,9 @@ function MediaSection() {
                   onClick={handleVideoPlayerClick}
                   style={{ cursor: "pointer" }}
                 />
-                <p className="video-hint" style={{ color: "#94a3b8", fontSize: "12px", margin: "8px 0 16px" }}>
-                  Tip: Click anywhere on the video screen to play or pause.
+
+                <p className="video-hint">
+                  Click the video screen to play or pause.
                 </p>
               </>
             ) : (
@@ -446,26 +525,26 @@ function MediaSection() {
             )}
 
             {sameGenreFilms.length > 0 && (
-              <div className="video-modal-recommendations" style={{ marginTop: "24px", textAlign: "left" }}>
-                <h3 style={{ color: "#ffffff", fontSize: "18px", marginBottom: "14px" }}>
-                  More {selectedFilm.genre} films
-                </h3>
-                <div
-                  className="media-film-grid"
-                  style={{
-                    gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
-                    gap: "14px",
-                  }}
-                >
+              <section className="video-recommendations">
+                <div className="media-row-heading">
+                  <div>
+                    <p className="eyebrow">KEEP WATCHING</p>
+                    <h3>More {selectedFilm.genre} films</h3>
+                  </div>
+                </div>
+
+                <div className="media-film-grid video-recommendation-grid">
                   {sameGenreFilms.map((film) => (
                     <FilmCard
-                      key={film.id || film.title}
+                      key={filmKey(film)}
                       film={film}
-                      onPlay={setSelectedFilm}
+                      onPlay={handleSelectRecommendation}
+                      onToggleSaved={toggleSavedFilm}
+                      isSaved={savedFilmKeys.has(filmKey(film))}
                     />
                   ))}
                 </div>
-              </div>
+              </section>
             )}
           </div>
         </div>
