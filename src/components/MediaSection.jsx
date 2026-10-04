@@ -12,46 +12,15 @@ export default function MediaSection() {
   const categories = ["All", "Action", "Drama", "Comedy", "Sci-Fi"];
 
   const films = [
-    {
-      title: "Neon Nights",
-      year: 2025,
-      category: "Action",
-      rating: 4.7,
-      color: "#7c3aed",
-      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    },
-    {
-      title: "The Last Horizon",
-      year: 2024,
-      category: "Drama",
-      rating: 4.8,
-      color: "#db2777",
-      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-    },
-    {
-      title: "Quantum Leap",
-      year: 2026,
-      category: "Sci-Fi",
-      rating: 4.9,
-      color: "#059669",
-      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    },
-    {
-      title: "Laugh Out Loud",
-      year: 2025,
-      category: "Comedy",
-      rating: 4.5,
-      color: "#dc2626",
-      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-    },
+    { title: "Neon Nights", year: 2025, category: "Action", rating: 4.7, color: "#7c3aed", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
+    { title: "The Last Horizon", year: 2024, category: "Drama", rating: 4.8, color: "#db2777", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4" },
+    { title: "Quantum Leap", year: 2026, category: "Sci-Fi", rating: 4.9, color: "#059669", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" },
+    { title: "Laugh Out Loud", year: 2025, category: "Comedy", rating: 4.5, color: "#dc2626", videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" },
   ];
 
   const filteredFilms = films.filter((film) => {
-    const matchesCategory =
-      activeCategory === "All" || film.category === activeCategory;
-    const matchesSearch =
-      search === "" ||
-      film.title.toLowerCase().includes(search.toLowerCase());
+    const matchesCategory = activeCategory === "All" || film.category === activeCategory;
+    const matchesSearch = search === "" || film.title.toLowerCase().includes(search.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
@@ -84,7 +53,7 @@ export default function MediaSection() {
       <section className="media-hero">
         <div className="media-hero-content">
           <h1>Films, Cartoons & Dramas</h1>
-          <p className="media-hero-description">Stream the latest movies and shows.</p>
+          <p className="media-hero-description">Stream the latest movies and shows. From action blockbusters to heartfelt dramas.</p>
           <div className="media-meta">
             <span>2026</span>
             <span>🎬 Cinema</span>
@@ -146,7 +115,13 @@ export default function MediaSection() {
           <div className="video-modal-content" onClick={(e) => e.stopPropagation()}>
             <button className="video-modal-close" onClick={closeVideo}>✕</button>
             <h2>{selectedVideo.title}</h2>
-            <video ref={videoRef} className="media-video-player" src={selectedVideo.videoUrl} controls onClick={handleVideoClick} />
+            <video
+              ref={videoRef}
+              className="media-video-player"
+              src={selectedVideo.videoUrl}
+              controls
+              onClick={handleVideoClick}
+            />
           </div>
         </div>
       )}
