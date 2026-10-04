@@ -1,153 +1,155 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
+import "./App.css";
 
-const sampleFilms = [
-  { id: "sample-last-horizon", title: "The Last Horizon", genre: "Sci-Fi", year: "2026", duration: "2h 18m", rating: "8.7", color: "#172554", progress: 72, description: "Humanity has one final chance to reach a distant world before Earth becomes uninhabitable.", video_url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" },
-  { id: "sample-midnight-streets", title: "Midnight Streets", genre: "Crime", year: "2025", duration: "1h 54m", rating: "8.2", color: "#3f1d2e", progress: 45, description: "A detective follows a dangerous trail through a city that never sleeps.", video_url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4" },
-  { id: "sample-beyond-valley", title: "Beyond the Valley", genre: "Adventure", year: "2025", duration: "2h 06m", rating: "8.5", color: "#14532d", progress: 0, description: "A team of explorers discovers an untouched valley filled with mystery.", video_url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4" },
-];
-
-const categories = ["All films", "My uploads", "New releases", "Action", "Drama", "Sci-Fi", "Documentary"];
-const colors = ["#2563eb", "#7c3aed", "#0f766e", "#be123c", "#b45309", "#166534"];
-
-function convertFilm(film, index) {
-  return {
-    id: film.id,
-    title: film.title,
-    description: film.description || "No description has been added for this film yet.",
-    genre: film.genre || "Film",
-    year: film.release_year ? String(film.release_year) : "New",
-    duration: film.duration || "Duration unavailable",
-    rating: film.rating ? String(film.rating) : "New",
-    color: colors[index % colors.length],
-    progress: 0,
-    video_url: film.video_url || null,
-    poster_url: film.poster_url || null,
-    isUploaded: true,
-  };
-}
-
-function FilmCard({ film, onWatch }) {
-  return (
-    <article className="media-film-card" style={{ "--film-color": film.color }}>
-      <button
-        className="media-film-poster"
-        type="button"
-        onClick={() => onWatch(film)}
-        aria-label={`Open ${film.title}`}
-        style={film.poster_url ? {
-          backgroundImage: `linear-gradient(0deg, rgba(2, 6, 23, 0.82), rgba(2, 6, 23, 0.04)), url(${film.poster_url})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-        } : undefined}
-      >
-        <span className="media-film-top"><span>{film.genre}</span><span className="media-save-button" aria-hidden="true">♡</span></span>
-        <span className="media-card-play" aria-hidden="true">▶</span>
-        <span className="media-film-bottom"><span>★ {film.rating}</span><span>{film.year}</span></span>
-      </button>
-      <div className="media-film-body"><h3>{film.title}</h3><p>{film.genre} · {film.duration}</p></div>
-    </article>
-  );
-}
-
-function MediaRow({ title, subtitle, items, onWatch }) {
-  if (!items.length) return null;
-  return (
-    <section className="media-row-section">
-      <div className="media-row-heading"><div><p className="eyebrow">{subtitle}</p><h2>{title}</h2></div></div>
-      <div className="media-film-grid">{items.map((film) => <FilmCard key={film.id} film={film} onWatch={onWatch} />)}</div>
-    </section>
-  );
-}
-
-function WatchPage({ film, onBack }) {
-  const videoRef = useRef(null);
+export default function MediaSection() {
+  const [activeCategory, setActiveCategory] = useState("All");
+  const [search, setSearch] = useState("");
+  const [selectedVideo, setSelectedVideo] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [videoError, setVideoError] = useState("");
+  const videoRef = useRef(null);
 
-  async function playVideo() {
-    if (!videoRef.current || !film.video_url) return;
-    try {
-      await videoRef.current.play();
-      setIsPlaying(true);
-    } catch {
-      setVideoError("The video could not start. Please use the player controls to try again.");
-    }
+  const categories = ["All", "Action", "Drama", "Comedy", "Sci-Fi"];
+
+  const films = [
+    {
+      title: "Neon Nights",
+      year: 2025,
+      category: "Action",
+      rating: 4.7,
+      color: "#7c3aed",
+      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    },
+    {
+      title: "The Last Horizon",
+      year: 2024,
+      category: "Drama",
+      rating: 4.8,
+      color: "#db2777",
+      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    },
+    {
+      title: "Quantum Leap",
+      year: 2026,
+      category: "Sci-Fi",
+      rating: 4.9,
+      color: "#059669",
+      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    },
+    {
+      title: "Laugh Out Loud",
+      year: 2025,
+      category: "Comedy",
+      rating: 4.5,
+      color: "#dc2626",
+      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    },
+  ];
+
+  const filteredFilms = films.filter((film) => {
+    const matchesCategory =
+      activeCategory === "All" || film.category === activeCategory;
+    const matchesSearch =
+      search === "" ||
+      film.title.toLowerCase().includes(search.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
+
+  function openVideo(film) {
+    setSelectedVideo(film);
+    setIsPlaying(false);
   }
 
-  function togglePlayback() {
+  function closeVideo() {
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
+    setSelectedVideo(null);
+    setIsPlaying(false);
+  }
+
+  function handleVideoClick() {
     if (!videoRef.current) return;
-    if (videoRef.current.paused) playVideo();
-    else videoRef.current.pause();
+    if (isPlaying) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      videoRef.current.play();
+      setIsPlaying(true);
+    }
   }
 
   return (
-    <section className="watch-page section-page">
-      <button className="watch-back-button" type="button" onClick={onBack}>← Back to Media</button>
-      <div className="watch-layout">
-        <div className="watch-player-shell">
-          {film.video_url ? <>
-            <video ref={videoRef} className="watch-video" src={film.video_url} controls playsInline onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onError={() => setVideoError("This video could not be loaded. Check the uploaded file and storage policy.")} onClick={togglePlayback} />
-            {!isPlaying && !videoError && <button className="watch-play-overlay" type="button" onClick={playVideo}><span>▶</span><small>Click to play</small></button>}
-          </> : <div className="watch-unavailable">This film does not have a video file yet.</div>}
+    <div className="media-page">
+      <section className="media-hero">
+        <div className="media-hero-content">
+          <h1>Films, Cartoons & Dramas</h1>
+          <p className="media-hero-description">Stream the latest movies and shows.</p>
+          <div className="media-meta">
+            <span>2026</span>
+            <span>🎬 Cinema</span>
+            <span>★ 4.7</span>
+          </div>
+          <div className="media-hero-actions">
+            <button className="media-watch-button">Watch Now</button>
+            <button className="media-list-button">My List</button>
+          </div>
         </div>
-        {videoError && <p className="watch-error">{videoError}</p>}
-        <div className="watch-details">
-          <p className="eyebrow">NOW WATCHING</p>
-          <h1>{film.title}</h1>
-          <div className="media-meta"><span>{film.year}</span><span>{film.duration}</span><span>★ {film.rating}</span><span>{film.genre}</span></div>
-          <p>{film.description}</p>
-          <button className="watch-play-button" type="button" onClick={playVideo} disabled={!film.video_url}>▶ Play film</button>
-        </div>
+      </section>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24 }}>
+        <input
+          className="search-input"
+          type="search"
+          placeholder="Search titles"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, border: "1px solid #334155", borderRadius: 8, padding: "10px 14px", background: "#101c2e", color: "#cbd5e1", outline: "none" }}
+        />
       </div>
-    </section>
+
+      <div className="media-categories">
+        {categories.map((cat) => (
+          <button key={cat} className={activeCategory === cat ? "selected" : ""} onClick={() => setActiveCategory(cat)}>{cat}</button>
+        ))}
+      </div>
+
+      <section className="media-row-section">
+        <div className="media-row-heading">
+          <h2>{activeCategory} Films</h2>
+          <button>View All</button>
+        </div>
+        <div className="media-film-grid">
+          {filteredFilms.map((film, idx) => (
+            <div key={idx} className="media-film-card">
+              <div className="media-film-poster" style={{ "--film-color": film.color }}>
+                <div className="media-film-top">
+                  <span>{film.category}</span>
+                  <button className="media-save-button">♥</button>
+                </div>
+                <div className="media-film-bottom">
+                  <span>★ {film.rating}</span>
+                </div>
+                <button className="media-play-button" onClick={() => openVideo(film)}>▶</button>
+              </div>
+              <div className="media-film-body">
+                <h3>{film.title}</h3>
+                <p>{film.year}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {selectedVideo && (
+        <div className="video-modal" onClick={closeVideo}>
+          <div className="video-modal-content" onClick={(e) => e.stopPropagation()}>
+            <button className="video-modal-close" onClick={closeVideo}>✕</button>
+            <h2>{selectedVideo.title}</h2>
+            <video ref={videoRef} className="media-video-player" src={selectedVideo.videoUrl} controls onClick={handleVideoClick} />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
-
-function MediaSection() {
-  const [uploadedFilms, setUploadedFilms] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [watchingFilm, setWatchingFilm] = useState(null);
-  const [selectedCategory, setSelectedCategory] = useState("All films");
-
-  useEffect(() => {
-    async function loadFilms() {
-      setLoading(true);
-      const { data, error: filmsError } = await supabase.from("films").select("*").order("created_at", { ascending: false });
-      if (filmsError) setError(filmsError.message);
-      else { setUploadedFilms((data || []).map(convertFilm)); setError(""); }
-      setLoading(false);
-    }
-    loadFilms();
-  }, []);
-
-  const allFilms = useMemo(() => [...uploadedFilms, ...sampleFilms], [uploadedFilms]);
-  const filteredFilms = useMemo(() => {
-    if (selectedCategory === "All films") return allFilms;
-    if (selectedCategory === "My uploads") return uploadedFilms;
-    if (selectedCategory === "New releases") return allFilms.filter((film) => film.year === "2026" || film.isUploaded);
-    return allFilms.filter((film) => film.genre === selectedCategory);
-  }, [allFilms, selectedCategory, uploadedFilms]);
-
-  if (watchingFilm) return <WatchPage film={watchingFilm} onBack={() => setWatchingFilm(null)} />;
-
-  const visibleUploads = filteredFilms.filter((film) => film.isUploaded);
-  const continueWatching = filteredFilms.filter((film) => Number(film.progress) > 0);
-  const recommended = filteredFilms.filter((film) => Number(film.rating) >= 8.1 || film.isUploaded);
-  const featured = uploadedFilms[0] || sampleFilms[0];
-
-  return (
-    <section className="media-page section-page">
-      <div className="media-hero"><div className="media-hero-content"><p className="eyebrow">FEATURED FILM</p><h1>{featured.title}</h1><div className="media-meta"><span>{featured.year}</span><span>{featured.duration}</span><span>★ {featured.rating}</span><span>{featured.genre}</span></div><p className="media-hero-description">{featured.description}</p><div className="media-hero-actions"><button className="media-watch-button" type="button" onClick={() => setWatchingFilm(featured)}>▶ Watch now</button><button className="media-list-button" type="button" onClick={() => alert("Added to your list.")}>+ Add to list</button></div></div></div>
-      <div className="media-categories">{categories.map((category) => <button key={category} className={selectedCategory === category ? "selected" : ""} type="button" onClick={() => setSelectedCategory(category)}>{category}</button>)}</div>
-      {loading && <p className="media-status">Loading uploaded films…</p>}
-      {error && <p className="media-status media-error">Could not load uploaded films: {error}</p>}
-      {!loading && visibleUploads.length > 0 && <MediaRow title="Your uploaded films" subtitle="Added through your Admin Dashboard" items={visibleUploads} onWatch={setWatchingFilm} />}
-      <MediaRow title="Continue watching" subtitle="Pick up where you left off" items={continueWatching} onWatch={setWatchingFilm} />
-      <MediaRow title="Recommended for you" subtitle="Discover films selected for you" items={recommended} onWatch={setWatchingFilm} />
-    </section>
-  );
-}
-
-export default MediaSection;
