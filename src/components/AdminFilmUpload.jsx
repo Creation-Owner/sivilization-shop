@@ -21,17 +21,11 @@ function AdminFilmUpload() {
   }
 
   function formatFileSize(bytes) {
-    if (!bytes) {
-      return "0 KB";
-    }
-
+    if (!bytes) return "0 KB";
     const megabytes = bytes / 1024 / 1024;
-
-    if (megabytes >= 1) {
-      return `${megabytes.toFixed(1)} MB`;
-    }
-
-    return `${Math.ceil(bytes / 1024)} KB`;
+    return megabytes >= 1
+      ? `${megabytes.toFixed(1)} MB`
+      : `${Math.ceil(bytes / 1024)} KB`;
   }
 
   function makeSafeFileName(fileName) {
@@ -43,7 +37,6 @@ function AdminFilmUpload() {
 
   function handleVideoChange(event) {
     const file = event.target.files?.[0] || null;
-
     if (!file) {
       setVideoFile(null);
       return;
@@ -62,7 +55,6 @@ function AdminFilmUpload() {
 
   function handlePosterChange(event) {
     const file = event.target.files?.[0] || null;
-
     if (!file) {
       setPosterFile(null);
       return;
@@ -92,6 +84,11 @@ function AdminFilmUpload() {
       return;
     }
 
+    if (accessType === "rent" && priceCents <= 0) {
+      showMessage("Enter a rental price greater than $0.", "error");
+      return;
+    }
+
     setLoading(true);
     showMessage("Uploading your film...", "info");
 
@@ -107,25 +104,19 @@ function AdminFilmUpload() {
         throw new Error("You must be signed in as an administrator.");
       }
 
-      const { data: profile, error: profileError } =
-        await supabase
-          .from("profiles")
-          .select("is_admin")
-          .eq("id", user.id)
-          .single();
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", user.id)
+        .single();
 
-      if (profileError) {
-        throw profileError;
-      }
-
+      if (profileError) throw profileError;
       if (!profile?.is_admin) {
         throw new Error("Only administrators can upload films.");
       }
 
       const fileId = crypto.randomUUID();
-      const videoName = makeSafeFileName(videoFile.name);
-
-      videoPath = `videos/${fileId}-${videoName}`;
+      videoPath = `videos/${fileId}-${makeSafeFileName(videoFile.name)}`;
 
       const { error: videoError } = await supabase.storage
         .from("films")
@@ -135,15 +126,11 @@ function AdminFilmUpload() {
           contentType: videoFile.type,
         });
 
-      if (videoError) {
-        throw videoError;
-      }
+      if (videoError) throw videoError;
 
       if (posterFile) {
         const posterId = crypto.randomUUID();
-        const posterName = makeSafeFileName(posterFile.name);
-
-        posterPath = `posters/${posterId}-${posterName}`;
+        posterPath = `posters/${posterId}-${makeSafeFileName(posterFile.name)}`;
 
         const { error: posterError } = await supabase.storage
           .from("films")
@@ -153,32 +140,24 @@ function AdminFilmUpload() {
             contentType: posterFile.type,
           });
 
-        if (posterError) {
-          throw posterError;
-        }
+        if (posterError) throw posterError;
       }
 
-      const priceValue = accessType === "rent" ? Number(priceCents) || 0 : 0;
+      const { error: filmError } = await supabase.from("films").insert({
+        title: title.trim(),
+        description: description.trim() || null,
+        genre,
+        release_year: Number(releaseYear) || null,
+        duration: duration.trim() || null,
+        rating: 0,
+        video_path: videoPath,
+        poster_path: posterPath,
+        created_by: user.id,
+        access_type: accessType,
+        price_cents: accessType === "rent" ? priceCents : 0,
+      });
 
-      const { error: filmError } = await supabase
-        .from("films")
-        .insert({
-          title: title.trim(),
-          description: description.trim() || null,
-          genre,
-          release_year: Number(releaseYear) || null,
-          duration: duration.trim() || null,
-          rating: 0,
-          video_path: videoPath,
-          poster_path: posterPath,
-          created_by: user.id,
-          access_type: accessType,
-          price_cents: priceValue,
-        });
-
-      if (filmError) {
-        throw filmError;
-      }
+      if (filmError) throw filmError;
 
       setTitle("");
       setDescription("");
@@ -189,23 +168,15 @@ function AdminFilmUpload() {
       setPriceCents(0);
       setVideoFile(null);
       setPosterFile(null);
-
       event.target.reset();
-
       showMessage("Film uploaded successfully.", "success");
     } catch (error) {
       if (videoPath) {
-        await supabase.storage
-          .from("films")
-          .remove([videoPath]);
+        await supabase.storage.from("films").remove([videoPath]);
       }
-
       if (posterPath) {
-        await supabase.storage
-          .from("films")
-          .remove([posterPath]);
+        await supabase.storage.from("films").remove([posterPath]);
       }
-
       showMessage(error.message || "Upload failed.", "error");
     } finally {
       setLoading(false);
@@ -217,45 +188,32 @@ function AdminFilmUpload() {
       <div className="admin-upload-header">
         <div>
           <p className="eyebrow">ADMIN TOOLS</p>
-
           <h2>Upload a new film</h2>
-
           <p>
-            Add the film information first, then choose the video file
-            that users will watch.
+            Add the film information, choose access, then select the video
+            users will watch.
           </p>
         </div>
-
-        <div className="admin-badge">
-          Admin only
-        </div>
+        <div className="admin-badge">Admin only</div>
       </div>
 
-      <form
-        className="admin-upload-form"
-        onSubmit={handleUpload}
-      >
+      <form className="admin-upload-form" onSubmit={handleUpload}>
         <div className="admin-form-section">
           <div className="admin-section-title">
             <span>01</span>
             <div>
               <h3>Film information</h3>
-              <p>Tell users what this film is about.</p>
+              <p>Tell users what this film is about and how they can watch it.</p>
             </div>
           </div>
 
           <div className="admin-form-grid">
             <label className="admin-field admin-field-wide">
-              <span>
-                Film title <b>*</b>
-              </span>
-
+              <span>Film title <b>*</b></span>
               <input
                 type="text"
                 value={title}
-                onChange={(event) =>
-                  setTitle(event.target.value)
-                }
+                onChange={(event) => setTitle(event.target.value)}
                 placeholder="Example: The Last Horizon"
                 disabled={loading}
                 required
@@ -264,12 +222,9 @@ function AdminFilmUpload() {
 
             <label className="admin-field">
               <span>Genre</span>
-
               <select
                 value={genre}
-                onChange={(event) =>
-                  setGenre(event.target.value)
-                }
+                onChange={(event) => setGenre(event.target.value)}
                 disabled={loading}
               >
                 <option>Drama</option>
@@ -285,15 +240,12 @@ function AdminFilmUpload() {
 
             <label className="admin-field">
               <span>Release year</span>
-
               <input
                 type="number"
                 min="1888"
                 max="2100"
                 value={releaseYear}
-                onChange={(event) =>
-                  setReleaseYear(event.target.value)
-                }
+                onChange={(event) => setReleaseYear(event.target.value)}
                 placeholder="2026"
                 disabled={loading}
               />
@@ -301,62 +253,54 @@ function AdminFilmUpload() {
 
             <label className="admin-field">
               <span>Duration</span>
-
               <input
                 type="text"
                 value={duration}
-                onChange={(event) =>
-                  setDuration(event.target.value)
-                }
+                onChange={(event) => setDuration(event.target.value)}
                 placeholder="2h 10m"
                 disabled={loading}
               />
             </label>
 
             <label className="admin-field">
-              <span>Access type</span>
-
+              <span>Film access <b>*</b></span>
               <select
                 value={accessType}
-                onChange={(event) =>
-                  setAccessType(event.target.value)
-                }
+                onChange={(event) => setAccessType(event.target.value)}
                 disabled={loading}
+                required
               >
                 <option value="free">Free to watch</option>
-                <option value="rent">Rent (one-time payment)</option>
+                <option value="rent">Paid rental</option>
                 <option value="subscription">Subscriber only</option>
               </select>
             </label>
 
             {accessType === "rent" && (
               <label className="admin-field">
-                <span>Rental price (USD)</span>
-
+                <span>Rental price (USD) <b>*</b></span>
                 <input
                   type="number"
-                  min="0"
+                  min="0.01"
                   step="0.01"
-                  value={(priceCents / 100).toFixed(2)}
+                  value={priceCents ? (priceCents / 100).toFixed(2) : ""}
                   onChange={(event) => {
                     const value = Number(event.target.value) || 0;
                     setPriceCents(Math.round(value * 100));
                   }}
                   placeholder="3.99"
                   disabled={loading}
+                  required
                 />
               </label>
             )}
 
             <label className="admin-field admin-field-wide">
               <span>Description</span>
-
               <textarea
                 value={description}
-                onChange={(event) =>
-                  setDescription(event.target.value)
-                }
-                placeholder="Write a short description of the film..."
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Write a description of the film..."
                 rows="5"
                 disabled={loading}
               />
@@ -382,22 +326,12 @@ function AdminFilmUpload() {
                 disabled={loading}
                 required
               />
-
               <span className="admin-file-icon">▶</span>
-
               <strong>Choose video file</strong>
-
-              <small>
-                MP4, WebM or MOV
-                <br />
-                Required
-              </small>
-
+              <small>MP4, WebM or MOV<br />Required</small>
               {videoFile && (
                 <span className="selected-file">
-                  {videoFile.name}
-                  <br />
-                  {formatFileSize(videoFile.size)}
+                  {videoFile.name}<br />{formatFileSize(videoFile.size)}
                 </span>
               )}
             </label>
@@ -409,22 +343,12 @@ function AdminFilmUpload() {
                 onChange={handlePosterChange}
                 disabled={loading}
               />
-
               <span className="admin-file-icon">▧</span>
-
               <strong>Choose poster image</strong>
-
-              <small>
-                PNG, JPG or WebP
-                <br />
-                Optional
-              </small>
-
+              <small>PNG, JPG or WebP<br />Optional</small>
               {posterFile && (
                 <span className="selected-file">
-                  {posterFile.name}
-                  <br />
-                  {formatFileSize(posterFile.size)}
+                  {posterFile.name}<br />{formatFileSize(posterFile.size)}
                 </span>
               )}
             </label>
@@ -432,25 +356,14 @@ function AdminFilmUpload() {
         </div>
 
         <div className="admin-upload-footer">
-          <p className="admin-required-note">
-            <b>*</b> Required fields
-          </p>
-
-          <button
-            className="admin-upload-button"
-            type="submit"
-            disabled={loading}
-          >
+          <p className="admin-required-note"><b>*</b> Required fields</p>
+          <button className="admin-upload-button" type="submit" disabled={loading}>
             {loading ? "Uploading film..." : "Upload film"}
           </button>
         </div>
 
         {message && (
-          <p
-            className={`admin-upload-message ${messageType}`}
-            role="status"
-            aria-live="polite"
-          >
+          <p className={`admin-upload-message ${messageType}`} role="status" aria-live="polite">
             {message}
           </p>
         )}
