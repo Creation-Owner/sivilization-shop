@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import AdminFilmUpload from "./AdminFilmUpload";
+import AdminSubscriptionPlans from "./AdminSubscriptionPlans";
 import "../App.css";
 
 const categories = [
@@ -808,7 +809,12 @@ function MediaSection() {
         userHasAccessMap={userHasAccessMap}
       />
 
-      {isAdmin && <AdminFilmUpload />}
+      {isAdmin && (
+        <>
+          <AdminFilmUpload />
+          <AdminSubscriptionPlans />
+        </>
+      )}
 
       {selectedFilm && (
         <div
