@@ -40,6 +40,8 @@ function convertDatabaseFilm(film) {
     rating: film.rating || "0",
     color: "#172554",
     progress: 0,
+    access_type: film.access_type || "free",
+    price_cents: film.price_cents || 0,
     video_url: getVideoUrl(film.video_path),
     video_path: film.video_path,
     poster_path: film.poster_path,
@@ -53,6 +55,10 @@ function FilmCard({
   onToggleSaved,
   isSaved = false,
 }) {
+  const isFree = film.access_type === "free";
+  const isRent = film.access_type === "rent";
+  const isSub = film.access_type === "subscription";
+
   return (
     <article
       className="media-film-card"
@@ -61,6 +67,16 @@ function FilmCard({
       <div className="media-film-poster">
         <div className="media-film-top">
           <span>{film.genre}</span>
+
+          <div className="access-badge">
+            {isFree && <span className="badge-free">Free</span>}
+            {isRent && (
+              <span className="badge-rent">
+                Rent ${((film.price_cents || 0) / 100).toFixed(2)}
+              </span>
+            )}
+            {isSub && <span className="badge-sub">Subscriber</span>}
+          </div>
 
           <button
             className={`media-save-button ${isSaved ? "saved" : ""}`}
@@ -152,6 +168,7 @@ function MediaRow({
 
 function MediaSection() {
   const [allFilms, setAllFilms] = useState([]);
+  const [subscriptionPlans, setSubscriptionPlans] = useState([]);
   const [selectedFilm, setSelectedFilm] = useState(null);
   const [selectedCategory, setSelectedCategory] =
     useState("All films");
@@ -210,6 +227,17 @@ function MediaSection() {
 
       setAllFilms(convertedFilms);
       setLoadingFilms(false);
+
+      // Load subscription plans
+      const { data: plans, error: plansError } = await supabase
+        .from("subscription_plans")
+        .select("*")
+        .eq("is_active", true)
+        .order("price_cents", { ascending: true });
+
+      if (!plansError && plans) {
+        setSubscriptionPlans(plans);
+      }
 
       // Load watch progress for uploaded films
       const { data: progressRows, error: progressError } = await supabase
@@ -394,6 +422,39 @@ function MediaSection() {
 
   return (
     <section className="media-page section-page">
+      {/* Subscriptions Section */}
+      {subscriptionPlans.length > 0 && (
+        <section className="subscriptions-section">
+          <div className="subscriptions-header">
+            <p className="eyebrow">SUBSCRIPTIONS</p>
+            <h2>Choose your plan</h2>
+            <p>Unlock subscriber‑only films and enjoy unlimited watching.</p>
+          </div>
+
+          <div className="subscriptions-grid">
+            {subscriptionPlans.map((plan) => (
+              <div key={plan.id} className="subscription-card">
+                <h3>{plan.name}</h3>
+                {plan.description && (
+                  <p className="subscription-description">{plan.description}</p>
+                )}
+                <div className="subscription-price">
+                  ${((plan.price_cents || 0) / 100).toFixed(2)}
+                  <span className="subscription-period">
+                    / {plan.duration_days >= 365
+                      ? `${plan.duration_days / 365} year${plan.duration_days / 365 > 1 ? "s" : ""}`
+                      : `${plan.duration_days} day${plan.duration_days > 1 ? "s" : ""}`}
+                  </span>
+                </div>
+                <button className="subscription-choose-button" type="button">
+                  Choose {plan.name}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="media-hero">
         <div className="media-hero-content">
           <p className="eyebrow">FEATURED FILM</p>

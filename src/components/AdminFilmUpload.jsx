@@ -7,6 +7,8 @@ function AdminFilmUpload() {
   const [genre, setGenre] = useState("Drama");
   const [releaseYear, setReleaseYear] = useState("");
   const [duration, setDuration] = useState("");
+  const [accessType, setAccessType] = useState("free");
+  const [priceCents, setPriceCents] = useState(0);
   const [videoFile, setVideoFile] = useState(null);
   const [posterFile, setPosterFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -156,6 +158,8 @@ function AdminFilmUpload() {
         }
       }
 
+      const priceValue = accessType === "rent" ? Number(priceCents) || 0 : 0;
+
       const { error: filmError } = await supabase
         .from("films")
         .insert({
@@ -168,6 +172,8 @@ function AdminFilmUpload() {
           video_path: videoPath,
           poster_path: posterPath,
           created_by: user.id,
+          access_type: accessType,
+          price_cents: priceValue,
         });
 
       if (filmError) {
@@ -179,6 +185,8 @@ function AdminFilmUpload() {
       setGenre("Drama");
       setReleaseYear("");
       setDuration("");
+      setAccessType("free");
+      setPriceCents(0);
       setVideoFile(null);
       setPosterFile(null);
 
@@ -304,6 +312,41 @@ function AdminFilmUpload() {
                 disabled={loading}
               />
             </label>
+
+            <label className="admin-field">
+              <span>Access type</span>
+
+              <select
+                value={accessType}
+                onChange={(event) =>
+                  setAccessType(event.target.value)
+                }
+                disabled={loading}
+              >
+                <option value="free">Free to watch</option>
+                <option value="rent">Rent (one-time payment)</option>
+                <option value="subscription">Subscriber only</option>
+              </select>
+            </label>
+
+            {accessType === "rent" && (
+              <label className="admin-field">
+                <span>Rental price (USD)</span>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={(priceCents / 100).toFixed(2)}
+                  onChange={(event) => {
+                    const value = Number(event.target.value) || 0;
+                    setPriceCents(Math.round(value * 100));
+                  }}
+                  placeholder="3.99"
+                  disabled={loading}
+                />
+              </label>
+            )}
 
             <label className="admin-field admin-field-wide">
               <span>Description</span>
