@@ -53,11 +53,16 @@ function FilmCard({
   showProgress = false,
   onPlay,
   onToggleSaved,
+  onRent,
+  onSubscribe,
   isSaved = false,
+  hasAccess = false,
 }) {
   const isFree = film.access_type === "free";
   const isRent = film.access_type === "rent";
   const isSub = film.access_type === "subscription";
+
+  const needsAction = !hasAccess && (isRent || isSub);
 
   return (
     <article
@@ -92,14 +97,37 @@ function FilmCard({
           </button>
         </div>
 
-        <button
-          className="media-play-button"
-          type="button"
-          onClick={() => onPlay(film)}
-          aria-label={`Play ${film.title}`}
-        >
-          ▶
-        </button>
+        {needsAction ? (
+          <div className="access-action-overlay">
+            {isRent && (
+              <button
+                className="access-action-button rent"
+                type="button"
+                onClick={() => onRent?.(film)}
+              >
+                Rent ${((film.price_cents || 0) / 100).toFixed(2)}
+              </button>
+            )}
+            {isSub && (
+              <button
+                className="access-action-button subscribe"
+                type="button"
+                onClick={() => onSubscribe?.(film)}
+              >
+                Subscribe
+              </button>
+            )}
+          </div>
+        ) : (
+          <button
+            className="media-play-button"
+            type="button"
+            onClick={() => onPlay(film)}
+            aria-label={`Play ${film.title}`}
+          >
+            ▶
+          </button>
+        )}
 
         <div className="media-film-bottom">
           <span>★ {film.rating}</span>
@@ -136,7 +164,10 @@ function MediaRow({
   showProgress = false,
   onPlay,
   onToggleSaved,
+  onRent,
+  onSubscribe,
   savedFilmKeys,
+  userHasAccessMap,
 }) {
   if (items.length === 0) return null;
 
@@ -158,7 +189,10 @@ function MediaRow({
             showProgress={showProgress}
             onPlay={onPlay}
             onToggleSaved={onToggleSaved}
+            onRent={onRent}
+            onSubscribe={onSubscribe}
             isSaved={savedFilmKeys.has(filmKey(film))}
+            hasAccess={!!userHasAccessMap[filmKey(film)]}
           />
         ))}
       </div>
@@ -178,6 +212,9 @@ function MediaSection() {
   const [savedFilmKeys, setSavedFilmKeys] = useState(() => new Set());
   const [watchProgressByFilm, setWatchProgressByFilm] = useState({});
   const [watchProgressError, setWatchProgressError] = useState("");
+  const [activeSubscription, setActiveSubscription] = useState(null);
+  const [rentedFilmKeys, setRentedFilmKeys] = useState(() => new Set());
+  const [userHasAccessMap, setUserHasAccessMap] = useState({});
 
   const videoPlayerRef = useRef(null);
 
@@ -204,8 +241,38 @@ function MediaSection() {
         } else {
           setIsAdmin(profile?.is_admin === true);
         }
+
+        // Load active subscription
+        const { data: subs, error: subsError } = await supabase
+          .from("user_subscriptions")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("is_active", true)
+          .gte("ends_at", new Date().toISOString())
+          .order("ends_at", { ascending: false })
+          .limit(1);
+
+        if (!subsError && subs && subs.length > 0) {
+          setActiveSubscription(subs[0]);
+        } else {
+          setActiveSubscription(null);
+        }
+
+        // Load rentals
+        const { data: rentals, error: rentalsError } = await supabase
+          .from("rentals")
+          .select("film_id")
+          .eq("user_id", user.id);
+
+        if (!rentalsError) {
+          setRentedFilmKeys(
+            new Set((rentals || []).map((r) => String(r.film_id)))
+          );
+        }
       } else {
         setIsAdmin(false);
+        setActiveSubscription(null);
+        setRentedFilmKeys(new Set());
       }
 
       const { data: databaseFilms, error: loadError } =
@@ -243,7 +310,7 @@ function MediaSection() {
       const { data: progressRows, error: progressError } = await supabase
         .from("watch_progress")
         .select("film_id, seconds_watched, duration_seconds, completed")
-        .eq("user_id", user.id);
+        .eq("user_id", user?.id);
 
       if (progressError) {
         console.error("Could not load watch progress:", progressError);
@@ -268,6 +335,27 @@ function MediaSection() {
 
     loadUserAndFilms();
   }, []);
+
+  // Build access map whenever films/subscription/rentals change
+  useEffect(() => {
+    const map = {};
+    const now = new Date();
+
+    allFilms.forEach((film) => {
+      const key = filmKey(film);
+      if (film.access_type === "free") {
+        map[key] = true;
+      } else if (film.access_type === "rent") {
+        map[key] = rentedFilmKeys.has(key);
+      } else if (film.access_type === "subscription") {
+        map[key] =
+          !!activeSubscription &&
+          new Date(activeSubscription.ends_at) >= now;
+      }
+    });
+
+    setUserHasAccessMap(map);
+  }, [allFilms, activeSubscription, rentedFilmKeys]);
 
   const filteredFilms =
     selectedCategory === "All films"
@@ -339,6 +427,129 @@ function MediaSection() {
 
       return nextKeys;
     });
+  }
+
+  async function handleRentFilm(film) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      alert("You must be signed in to rent a film.");
+      return;
+    }
+
+    const ok = confirm(
+      `Rent "${film.title}" for $${((film.price_cents || 0) / 100).toFixed(2)}? (Mock checkout – no real charge)`
+    );
+    if (!ok) return;
+
+    try {
+      const { error } = await supabase
+        .from("rentals")
+        .insert({
+          user_id: user.id,
+          film_id: film.id,
+          // optional: set expires_at if you want time-limited rentals
+        });
+
+      if (error) throw error;
+
+      setRentedFilmKeys((prev) => new Set(prev).add(filmKey(film)));
+      alert("Rental successful – you can now watch this film.");
+    } catch (err) {
+      console.error(err);
+      alert("Rental failed. Please try again.");
+    }
+  }
+
+  async function handleSubscribeForFilm(film) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      alert("You must be signed in to subscribe.");
+      return;
+    }
+
+    const plan = subscriptionPlans[0];
+    if (!plan) {
+      alert("No subscription plans available.");
+      return;
+    }
+
+    const ok = confirm(
+      `Subscribe to ${plan.name} for $${((plan.price_cents || 0) / 100).toFixed(2)}? (Mock checkout – no real charge)`
+    );
+    if (!ok) return;
+
+    try {
+      const endsAt = new Date();
+      endsAt.setDate(endsAt.getDate() + plan.duration_days);
+
+      const { error } = await supabase
+        .from("user_subscriptions")
+        .insert({
+          user_id: user.id,
+          plan_id: plan.id,
+          started_at: new Date().toISOString(),
+          ends_at: endsAt.toISOString(),
+          is_active: true,
+        });
+
+      if (error) throw error;
+
+      setActiveSubscription({
+        user_id: user.id,
+        plan_id: plan.id,
+        started_at: new Date().toISOString(),
+        ends_at: endsAt.toISOString(),
+        is_active: true,
+      });
+
+      alert("Subscription activated – you can now watch subscriber-only films.");
+    } catch (err) {
+      console.error(err);
+      alert("Subscription failed. Please try again.");
+    }
+  }
+
+  async function handleChooseSubscription(plan) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      alert("You must be signed in to subscribe.");
+      return;
+    }
+
+    const ok = confirm(
+      `Subscribe to ${plan.name} for $${((plan.price_cents || 0) / 100).toFixed(2)}? (Mock checkout – no real charge)`
+    );
+    if (!ok) return;
+
+    try {
+      const endsAt = new Date();
+      endsAt.setDate(endsAt.getDate() + plan.duration_days);
+
+      const { error } = await supabase
+        .from("user_subscriptions")
+        .insert({
+          user_id: user.id,
+          plan_id: plan.id,
+          started_at: new Date().toISOString(),
+          ends_at: endsAt.toISOString(),
+          is_active: true,
+        });
+
+      if (error) throw error;
+
+      setActiveSubscription({
+        user_id: user.id,
+        plan_id: plan.id,
+        started_at: new Date().toISOString(),
+        ends_at: endsAt.toISOString(),
+        is_active: true,
+      });
+
+      alert("Subscription activated – you can now watch subscriber-only films.");
+    } catch (err) {
+      console.error(err);
+      alert("Subscription failed. Please try again.");
+    }
   }
 
   function handleWatchFeatured() {
@@ -446,7 +657,11 @@ function MediaSection() {
                       : `${plan.duration_days} day${plan.duration_days > 1 ? "s" : ""}`}
                   </span>
                 </div>
-                <button className="subscription-choose-button" type="button">
+                <button
+                  className="subscription-choose-button"
+                  type="button"
+                  onClick={() => handleChooseSubscription(plan)}
+                >
                   Choose {plan.name}
                 </button>
               </div>
@@ -474,13 +689,31 @@ function MediaSection() {
               </p>
 
               <div className="media-hero-actions">
-                <button
-                  className="media-watch-button"
-                  type="button"
-                  onClick={handleWatchFeatured}
-                >
-                  ▶ Watch now
-                </button>
+                {userHasAccessMap[filmKey(allFilms[0])] ? (
+                  <button
+                    className="media-watch-button"
+                    type="button"
+                    onClick={handleWatchFeatured}
+                  >
+                    ▶ Watch now
+                  </button>
+                ) : allFilms[0].access_type === "rent" ? (
+                  <button
+                    className="media-watch-button"
+                    type="button"
+                    onClick={() => handleRentFilm(allFilms[0])}
+                  >
+                    Rent ${((allFilms[0].price_cents || 0) / 100).toFixed(2)}
+                  </button>
+                ) : (
+                  <button
+                    className="media-watch-button"
+                    type="button"
+                    onClick={() => handleSubscribeForFilm(allFilms[0])}
+                  >
+                    Subscribe
+                  </button>
+                )}
 
                 <button
                   className="media-list-button"
@@ -533,7 +766,10 @@ function MediaSection() {
         showProgress
         onPlay={setSelectedFilm}
         onToggleSaved={toggleSavedFilm}
+        onRent={handleRentFilm}
+        onSubscribe={handleSubscribeForFilm}
         savedFilmKeys={savedFilmKeys}
+        userHasAccessMap={userHasAccessMap}
       />
 
       <MediaRow
@@ -542,7 +778,10 @@ function MediaSection() {
         items={newReleases}
         onPlay={setSelectedFilm}
         onToggleSaved={toggleSavedFilm}
+        onRent={handleRentFilm}
+        onSubscribe={handleSubscribeForFilm}
         savedFilmKeys={savedFilmKeys}
+        userHasAccessMap={userHasAccessMap}
       />
 
       <MediaRow
@@ -551,7 +790,10 @@ function MediaSection() {
         items={recommended}
         onPlay={setSelectedFilm}
         onToggleSaved={toggleSavedFilm}
+        onRent={handleRentFilm}
+        onSubscribe={handleSubscribeForFilm}
         savedFilmKeys={savedFilmKeys}
+        userHasAccessMap={userHasAccessMap}
       />
 
       <MediaRow
@@ -560,7 +802,10 @@ function MediaSection() {
         items={savedFilms}
         onPlay={setSelectedFilm}
         onToggleSaved={toggleSavedFilm}
+        onRent={handleRentFilm}
+        onSubscribe={handleSubscribeForFilm}
         savedFilmKeys={savedFilmKeys}
+        userHasAccessMap={userHasAccessMap}
       />
 
       {isAdmin && <AdminFilmUpload />}
@@ -586,7 +831,34 @@ function MediaSection() {
 
             <h2>{selectedFilm.title}</h2>
 
-            {selectedFilm.video_url ? (
+            {!userHasAccessMap[filmKey(selectedFilm)] ? (
+              <div className="access-required-panel">
+                <p className="access-required-message">
+                  {selectedFilm.access_type === "rent"
+                    ? `This film requires a rental payment of $${((selectedFilm.price_cents || 0) / 100).toFixed(2)}.`
+                    : "This film is for subscribers only."}
+                </p>
+                <div className="access-required-actions">
+                  {selectedFilm.access_type === "rent" ? (
+                    <button
+                      className="media-watch-button"
+                      type="button"
+                      onClick={() => handleRentFilm(selectedFilm)}
+                    >
+                      Rent ${((selectedFilm.price_cents || 0) / 100).toFixed(2)}
+                    </button>
+                  ) : (
+                    <button
+                      className="media-watch-button"
+                      type="button"
+                      onClick={() => handleSubscribeForFilm(selectedFilm)}
+                    >
+                      Subscribe
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : selectedFilm.video_url ? (
               <>
                 <video
                   ref={videoPlayerRef}
@@ -639,7 +911,10 @@ function MediaSection() {
                       film={film}
                       onPlay={handleSelectRecommendation}
                       onToggleSaved={toggleSavedFilm}
+                      onRent={handleRentFilm}
+                      onSubscribe={handleSubscribeForFilm}
                       isSaved={savedFilmKeys.has(filmKey(film))}
+                      hasAccess={!!userHasAccessMap[filmKey(film)]}
                     />
                   ))}
                 </div>
