@@ -222,6 +222,8 @@ function MediaSection() {
   const [loadingFilms, setLoadingFilms] = useState(true);
   const [filmsError, setFilmsError] = useState("");
   const [savedFilmKeys, setSavedFilmKeys] = useState(() => new Set());
+  const [watchProgressByFilm, setWatchProgressByFilm] = useState({});
+  const [watchProgressError, setWatchProgressError] = useState("");
 
   const videoPlayerRef = useRef(null);
 
@@ -271,6 +273,32 @@ function MediaSection() {
 
       setAllFilms([...convertedFilms, ...sampleFilms]);
       setLoadingFilms(false);
+
+      // Load watch progress for uploaded films
+      const { data: progressRows, error: progressError } = await supabase
+        .from("watch_progress")
+        .select("film_id, seconds_watched, duration_seconds, completed")
+        .eq("user_id", user.id);
+
+      if (progressError) {
+        console.error("Could not load watch progress:", progressError);
+        setWatchProgressError(
+          "Your watch progress could not be loaded. Please refresh and try again."
+        );
+      } else {
+        setWatchProgressByFilm(
+          Object.fromEntries(
+            (progressRows || []).map((row) => [
+              String(row.film_id),
+              {
+                secondsWatched: Number(row.seconds_watched) || 0,
+                durationSeconds: Number(row.duration_seconds) || 0,
+                completed: row.completed === true,
+              },
+            ])
+          )
+        );
+      }
     }
 
     loadUserAndFilms();
@@ -289,15 +317,30 @@ function MediaSection() {
               (film) => film.genre === selectedCategory
             );
 
-  const continueWatching = filteredFilms.filter(
+  // Enrich uploaded films with persisted progress
+  const filmsWithProgress = filteredFilms.map((film) => {
+    if (!film.id) return film; // sample film
+    const prog = watchProgressByFilm[String(film.id)];
+    if (!prog) return film;
+    const percent =
+      prog.durationSeconds > 0
+        ? Math.min(
+            100,
+            Math.round((prog.secondsWatched / prog.durationSeconds) * 100)
+          )
+        : 0;
+    return { ...film, progress: percent };
+  });
+
+  const continueWatching = filmsWithProgress.filter(
     (film) => Number(film.progress) > 0
   );
 
-  const newReleases = filteredFilms.filter(
+  const newReleases = filmsWithProgress.filter(
     (film) => film.year === "2026"
   );
 
-  const recommended = filteredFilms.filter(
+  const recommended = filmsWithProgress.filter(
     (film) => Number(film.rating) >= 8.1
   );
 
@@ -357,8 +400,44 @@ function MediaSection() {
     }
   }
 
+  async function upsertWatchProgress(film, currentTime, duration) {
+    if (!film.id || !duration) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const secondsWatched = Math.max(0, Math.floor(currentTime));
+    const durationSeconds = Math.max(0, Math.floor(duration));
+    const completed = durationSeconds > 0 && secondsWatched >= durationSeconds * 0.95;
+
+    await supabase
+      .from("watch_progress")
+      .upsert(
+        {
+          user_id: user.id,
+          film_id: film.id,
+          seconds_watched: secondsWatched,
+          duration_seconds: durationSeconds,
+          completed,
+        },
+        { onConflict: "user_id,film_id" }
+      );
+
+    setWatchProgressByFilm((prev) => ({
+      ...prev,
+      [String(film.id)]: {
+        secondsWatched,
+        durationSeconds,
+        completed,
+      },
+    }));
+  }
+
   function closeVideoModal() {
-    videoPlayerRef.current?.pause();
+    const player = videoPlayerRef.current;
+    if (player && selectedFilm?.id) {
+      upsertWatchProgress(selectedFilm, player.currentTime, player.duration);
+    }
+    player?.pause();
     setSelectedFilm(null);
   }
 
@@ -374,7 +453,11 @@ function MediaSection() {
   }
 
   function handleSelectRecommendation(film) {
-    videoPlayerRef.current?.pause();
+    const player = videoPlayerRef.current;
+    if (player && selectedFilm?.id) {
+      upsertWatchProgress(selectedFilm, player.currentTime, player.duration);
+    }
+    player?.pause();
     setSelectedFilm(film);
   }
 
@@ -439,6 +522,12 @@ function MediaSection() {
       {filmsError && (
         <p className="media-status media-error">
           Database films could not be loaded: {filmsError}
+        </p>
+      )}
+
+      {watchProgressError && (
+        <p className="media-status media-error">
+          {watchProgressError}
         </p>
       )}
 
@@ -512,6 +601,22 @@ function MediaSection() {
                   autoPlay
                   onClick={handleVideoPlayerClick}
                   style={{ cursor: "pointer" }}
+                  onTimeUpdate={(e) => {
+                    if (selectedFilm?.id && e.target.duration) {
+                      // Throttle saves to once per 5 seconds
+                      if (
+                        !e.target.dataset.lastSave ||
+                        Date.now() - Number(e.target.dataset.lastSave) > 5000
+                      ) {
+                        upsertWatchProgress(
+                          selectedFilm,
+                          e.target.currentTime,
+                          e.target.duration
+                        );
+                        e.target.dataset.lastSave = String(Date.now());
+                      }
+                    }
+                  }}
                 />
 
                 <p className="video-hint">
