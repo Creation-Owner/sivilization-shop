@@ -3,69 +3,6 @@ import { supabase } from "../supabaseClient";
 import AdminFilmUpload from "./AdminFilmUpload";
 import "../App.css";
 
-const sampleFilms = [
-  {
-    title: "The Last Horizon",
-    genre: "Sci-Fi",
-    year: "2026",
-    duration: "2h 18m",
-    rating: "8.7",
-    color: "#172554",
-    progress: 72,
-    video_url:
-      "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-  },
-  {
-    title: "Midnight Streets",
-    genre: "Crime",
-    year: "2025",
-    duration: "1h 54m",
-    rating: "8.2",
-    color: "#3f1d2e",
-    progress: 45,
-    video_url:
-      "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-  },
-  {
-    title: "Beyond the Valley",
-    genre: "Adventure",
-    year: "2025",
-    duration: "2h 06m",
-    rating: "8.5",
-    color: "#14532d",
-    progress: 0,
-    video_url:
-      "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
-  },
-  {
-    title: "Silent Echoes",
-    genre: "Mystery",
-    year: "2024",
-    duration: "1h 47m",
-    rating: "7.9",
-    color: "#422006",
-    progress: 0,
-  },
-  {
-    title: "The Blue Room",
-    genre: "Drama",
-    year: "2026",
-    duration: "1h 51m",
-    rating: "8.1",
-    color: "#164e63",
-    progress: 0,
-  },
-  {
-    title: "After the Storm",
-    genre: "Romance",
-    year: "2025",
-    duration: "1h 42m",
-    rating: "7.8",
-    color: "#831843",
-    progress: 0,
-  },
-];
-
 const categories = [
   "All films",
   "Trending",
@@ -214,7 +151,7 @@ function MediaRow({
 }
 
 function MediaSection() {
-  const [allFilms, setAllFilms] = useState(sampleFilms);
+  const [allFilms, setAllFilms] = useState([]);
   const [selectedFilm, setSelectedFilm] = useState(null);
   const [selectedCategory, setSelectedCategory] =
     useState("All films");
@@ -271,7 +208,7 @@ function MediaSection() {
         convertDatabaseFilm
       );
 
-      setAllFilms([...convertedFilms, ...sampleFilms]);
+      setAllFilms(convertedFilms);
       setLoadingFilms(false);
 
       // Load watch progress for uploaded films
@@ -319,7 +256,7 @@ function MediaSection() {
 
   // Enrich uploaded films with persisted progress
   const filmsWithProgress = filteredFilms.map((film) => {
-    if (!film.id) return film; // sample film
+    if (!film.id) return film;
     const prog = watchProgressByFilm[String(film.id)];
     if (!prog) return film;
     const percent =
@@ -377,20 +314,14 @@ function MediaSection() {
   }
 
   function handleWatchFeatured() {
-    const featuredFilm = allFilms.find(
-      (film) => film.title === "The Last Horizon"
-    );
-
+    const featuredFilm = allFilms[0];
     if (featuredFilm) {
       setSelectedFilm(featuredFilm);
     }
   }
 
   function handleAddFeaturedToList() {
-    const featuredFilm = allFilms.find(
-      (film) => film.title === "The Last Horizon"
-    );
-
+    const featuredFilm = allFilms[0];
     if (featuredFilm) {
       setSavedFilmKeys((previousKeys) => {
         const nextKeys = new Set(previousKeys);
@@ -466,37 +397,40 @@ function MediaSection() {
       <div className="media-hero">
         <div className="media-hero-content">
           <p className="eyebrow">FEATURED FILM</p>
-          <h1>The Last Horizon</h1>
+          <h1>{allFilms[0]?.title || "No films yet"}</h1>
 
-          <div className="media-meta">
-            <span>2026</span>
-            <span>2h 18m</span>
-            <span>★ 8.7</span>
-            <span>Sci-Fi</span>
-          </div>
+          {allFilms[0] && (
+            <>
+              <div className="media-meta">
+                <span>{allFilms[0].year}</span>
+                <span>{allFilms[0].duration}</span>
+                <span>★ {allFilms[0].rating}</span>
+                <span>{allFilms[0].genre}</span>
+              </div>
 
-          <p className="media-hero-description">
-            Humanity has one final chance to reach a distant world
-            before Earth becomes uninhabitable.
-          </p>
+              <p className="media-hero-description">
+                {allFilms[0].description || "No description available."}
+              </p>
 
-          <div className="media-hero-actions">
-            <button
-              className="media-watch-button"
-              type="button"
-              onClick={handleWatchFeatured}
-            >
-              ▶ Watch now
-            </button>
+              <div className="media-hero-actions">
+                <button
+                  className="media-watch-button"
+                  type="button"
+                  onClick={handleWatchFeatured}
+                >
+                  ▶ Watch now
+                </button>
 
-            <button
-              className="media-list-button"
-              type="button"
-              onClick={handleAddFeaturedToList}
-            >
-              + Add to list
-            </button>
-          </div>
+                <button
+                  className="media-list-button"
+                  type="button"
+                  onClick={handleAddFeaturedToList}
+                >
+                  + Add to list
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -603,7 +537,6 @@ function MediaSection() {
                   style={{ cursor: "pointer" }}
                   onTimeUpdate={(e) => {
                     if (selectedFilm?.id && e.target.duration) {
-                      // Throttle saves to once per 5 seconds
                       if (
                         !e.target.dataset.lastSave ||
                         Date.now() - Number(e.target.dataset.lastSave) > 5000
