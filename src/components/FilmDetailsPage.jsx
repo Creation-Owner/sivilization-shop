@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { buyItem } from "../paddle";
+
+function formatCurrency(cents) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format((Number(cents) || 0) / 100);
+}
 
 function FilmDetailsPage({
   film,
@@ -27,6 +35,7 @@ function FilmDetailsPage({
   const [hasSubscription, setHasSubscription] = useState(false);
   const [hasPurchase, setHasPurchase] = useState(false);
   const [isPrivileged, setIsPrivileged] = useState(false);
+  const [buyingFilm, setBuyingFilm] = useState(false);
 
   const accessType = String(film.access_type || "free").toLowerCase();
   const isSample =
@@ -218,7 +227,6 @@ function FilmDetailsPage({
     setLoadingVideo(true);
 
     try {
-      // Legacy rows with a direct free URL can use it directly.
       if (!film.video_path && film.video_url && !isPaidFilm) {
         setVideoUrl(film.video_url);
         return;
@@ -243,6 +251,45 @@ function FilmDetailsPage({
       setVideoError(error.message || "Could not authorize playback.");
     } finally {
       setLoadingVideo(false);
+    }
+  }
+
+  async function handleBuyFilm() {
+    setMessage("");
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      setMessage("Please sign in before purchasing a film.");
+      return;
+    }
+
+    if (!film.paddle_price_id) {
+      setMessage("This film does not have a Paddle price configured yet.");
+      return;
+    }
+
+    setBuyingFilm(true);
+
+    try {
+      await buyItem({
+        priceId: film.paddle_price_id,
+        customData: {
+          user_id: user.id,
+          product_id: film.id,
+          product_type: "film",
+        },
+      });
+
+      setMessage("Paddle checkout opened. Complete payment to unlock playback.");
+    } catch (err) {
+      console.error("Buy film failed:", err);
+      setMessage(err?.message || "Could not open Paddle checkout.");
+    } finally {
+      setBuyingFilm(false);
     }
   }
 
@@ -368,7 +415,19 @@ function FilmDetailsPage({
     return (
       <div className="film-paywall">
         <h2>Purchase required</h2>
-        <p>You need to purchase this film before watching it.</p>
+        <p>Purchase this film to unlock full playback.</p>
+        <button
+          className="media-watch-button"
+          type="button"
+          onClick={handleBuyFilm}
+          disabled={buyingFilm || !film.paddle_price_id}
+        >
+          {buyingFilm
+            ? "Opening checkout…"
+            : film.paddle_price_id
+              ? `Buy film (${formatCurrency(film.price_cents)})`
+              : "Payment not configured"}
+        </button>
       </div>
     );
   }
@@ -512,13 +571,26 @@ function FilmDetailsPage({
                   : "Purchase this film to unlock playback."}
               </p>
 
-              {isSubscriptionFilm && (
+              {isSubscriptionFilm ? (
                 <button
                   className="media-watch-button"
                   type="button"
                   onClick={onNavigateToSubscriptions}
                 >
                   View subscription plans
+                </button>
+              ) : (
+                <button
+                  className="media-watch-button"
+                  type="button"
+                  onClick={handleBuyFilm}
+                  disabled={buyingFilm || !film.paddle_price_id}
+                >
+                  {buyingFilm
+                    ? "Opening checkout…"
+                    : film.paddle_price_id
+                      ? `Buy for ${formatCurrency(film.price_cents)}`
+                      : "Price not configured"}
                 </button>
               )}
             </>
@@ -656,7 +728,7 @@ function FilmDetailsPage({
                       <p>{comment.comment_text}</p>
                     </div>
 
-                    {comment.user_id === currentUserId && (
+                    {comment.user_id === currentUserId && (\
                       <button
                         className="comment-delete-button"
                         type="button"

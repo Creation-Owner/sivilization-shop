@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { openMultiItemCheckout } from "../paddle";
 
 function formatPrice(cents) {
   return new Intl.NumberFormat(undefined, {
@@ -14,6 +15,7 @@ export default function CartSection({ onCartChange }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busyId, setBusyId] = useState(null);
+  const [checkingOut, setCheckingOut] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -38,7 +40,7 @@ export default function CartSection({ onCartChange }) {
       const { data, error: cartError } = await supabase
         .from("cart_items")
         .select(
-          "id,quantity,product:products(id,title,description,category,price_cents,image_url,image_path)"
+          "id,quantity,product:products(id,title,description,category,price_cents,image_url,image_path,paddle_price_id)"
         )
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -133,6 +135,63 @@ export default function CartSection({ onCartChange }) {
     setBusyId(null);
   }
 
+  async function handleCheckout() {
+    setError("");
+    setMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setError("Please sign in to complete your checkout.");
+      return;
+    }
+
+    const missingPrice = cartItems.find(
+      (item) => !item.product?.paddle_price_id
+    );
+
+    if (missingPrice) {
+      setError(
+        `"${missingPrice.product?.title || "A product"}" has no Paddle price configured yet.`
+      );
+      return;
+    }
+
+    setCheckingOut(true);
+
+    try {
+      const items = cartItems.map((item) => ({
+        priceId: item.product.paddle_price_id,
+        quantity: Number(item.quantity) || 1,
+      }));
+
+      const productIds = cartItems
+        .map((item) => item.product?.id)
+        .filter(Boolean);
+
+      await openMultiItemCheckout({
+        items,
+        customData: {
+          user_id: user.id,
+          product_ids: productIds.join(","),
+          payment_type: "cart",
+        },
+      });
+
+      setMessage(
+        "Paddle checkout opened. Complete your card details to finalize your order."
+      );
+    } catch (checkoutErr) {
+      console.error("Cart checkout error:", checkoutErr);
+      setError(checkoutErr?.message || "Could not open checkout.");
+    } finally {
+      setCheckingOut(false);
+    }
+  }
+
   return (
     <section className="section-page cart-page">
       <header className="cart-header">
@@ -194,7 +253,7 @@ export default function CartSection({ onCartChange }) {
                       <button
                         type="button"
                         onClick={() => updateQuantity(item, quantity - 1)}
-                        disabled={busyId === item.id}
+                        disabled={busyId === item.id || checkingOut}
                         aria-label="Decrease quantity"
                       >
                         −
@@ -205,7 +264,7 @@ export default function CartSection({ onCartChange }) {
                       <button
                         type="button"
                         onClick={() => updateQuantity(item, quantity + 1)}
-                        disabled={busyId === item.id}
+                        disabled={busyId === item.id || checkingOut}
                         aria-label="Increase quantity"
                       >
                         +
@@ -223,7 +282,7 @@ export default function CartSection({ onCartChange }) {
                     <button
                       type="button"
                       onClick={() => removeItem(item)}
-                      disabled={busyId === item.id}
+                      disabled={busyId === item.id || checkingOut}
                     >
                       Remove
                     </button>
@@ -251,8 +310,13 @@ export default function CartSection({ onCartChange }) {
               <strong>{formatPrice(subtotal)}</strong>
             </div>
 
-            <button type="button" disabled>
-              Checkout not configured
+            <button
+              className="button button-primary"
+              type="button"
+              onClick={handleCheckout}
+              disabled={checkingOut}
+            >
+              {checkingOut ? "Opening checkout…" : "Pay with Card (Paddle)"}
             </button>
           </aside>
         </>

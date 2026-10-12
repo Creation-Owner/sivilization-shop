@@ -12,8 +12,29 @@ function getPosterUrl(film) {
   return data?.publicUrl || "";
 }
 
+function getProductImageUrl(product) {
+  if (product.image_url) return product.image_url;
+  if (!product.image_path) return "";
+
+  const { data } = supabase.storage
+    .from("product-images")
+    .getPublicUrl(product.image_path);
+
+  return data?.publicUrl || "";
+}
+
+function formatPrice(cents) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format((Number(cents) || 0) / 100);
+}
+
 export default function LibrarySection({ search = "" }) {
-  const [films, setFilms] = useState([]);
+  const [activeTab, setActiveTab] = useState("products");
+  const [savedFilms, setSavedFilms] = useState([]);
+  const [purchasedProducts, setPurchasedProducts] = useState([]);
+  const [purchasedFilms, setPurchasedFilms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -33,110 +54,145 @@ export default function LibrarySection({ search = "" }) {
       if (!alive) return;
 
       if (authError || !user) {
-        setError("Please sign in again to view your library.");
+        setError("Please sign in to view your library.");
         setLoading(false);
         return;
       }
 
-      const { data, error: queryError } = await supabase
-        .from("saved_films")
-        .select(`
-          created_at,
-          films (
-            id,
-            title,
-            description,
-            genre,
-            release_year,
-            duration,
-            poster_url,
-            poster_path,
-            access_type
-          )
-        `)
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+      try {
+        const [savedRes, productsRes, filmsRes] = await Promise.all([
+          supabase
+            .from("saved_films")
+            .select(`
+              created_at,
+              films (
+                id,
+                title,
+                description,
+                genre,
+                release_year,
+                duration,
+                poster_url,
+                poster_path,
+                access_type
+              )
+            `)
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
 
-      if (!alive) return;
+          supabase
+            .from("product_purchases")
+            .select(`
+              id,
+              created_at,
+              product:products (
+                id,
+                title,
+                description,
+                category,
+                price_cents,
+                image_url,
+                image_path
+              )
+            `)
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
 
-      if (queryError) {
-        setError(queryError.message);
-        setFilms([]);
-      } else {
-        setFilms(
-          (data || [])
+          supabase
+            .from("purchases")
+            .select(`
+              id,
+              purchase_type,
+              price_cents,
+              purchased_at,
+              film:films (
+                id,
+                title,
+                description,
+                genre,
+                release_year,
+                duration,
+                poster_url,
+                poster_path,
+                access_type
+              )
+            `)
+            .eq("user_id", user.id)
+            .order("purchased_at", { ascending: false }),
+        ]);
+
+        if (!alive) return;
+
+        if (savedRes.error) console.error("Saved films error:", savedRes.error);
+        if (productsRes.error) console.error("Products error:", productsRes.error);
+        if (filmsRes.error) console.error("Film purchases error:", filmsRes.error);
+
+        setSavedFilms(
+          (savedRes.data || [])
             .filter((row) => row.films)
+            .map((row) => ({ ...row.films, saved_at: row.created_at }))
+        );
+
+        setPurchasedProducts(
+          (productsRes.data || [])
+            .filter((row) => row.product)
+            .map((row) => ({ ...row.product, purchase_id: row.id, purchased_at: row.created_at }))
+        );
+
+        setPurchasedFilms(
+          (filmsRes.data || [])
+            .filter((row) => row.film)
             .map((row) => ({
-              ...row.films,
-              saved_at: row.created_at,
+              ...row.film,
+              purchase_id: row.id,
+              purchase_type: row.purchase_type,
+              purchased_at: row.purchased_at,
             }))
         );
+      } catch (err) {
+        if (alive) setError(err?.message || "Could not load library.");
+      } finally {
+        if (alive) setLoading(false);
       }
-
-      setLoading(false);
     }
 
-    loadLibrary().catch((loadError) => {
-      if (alive) {
-        setError(loadError?.message || "Could not load your library.");
-        setLoading(false);
-      }
-    });
+    loadLibrary();
 
     return () => {
       alive = false;
     };
   }, []);
 
-  const filteredFilms = useMemo(() => {
+  const filteredProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
-
-    if (!term) return films;
-
-    return films.filter((film) =>
-      [film.title, film.description, film.genre, film.release_year]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(term)
+    if (!term) return purchasedProducts;
+    return purchasedProducts.filter((p) =>
+      [p.title, p.description, p.category].filter(Boolean).join(" ").toLowerCase().includes(term)
     );
-  }, [films, search]);
+  }, [purchasedProducts, search]);
 
-  async function removeSavedFilm(filmId) {
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+  const filteredPurchasedFilms = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return purchasedFilms;
+    return purchasedFilms.filter((f) =>
+      [f.title, f.description, f.genre].filter(Boolean).join(" ").toLowerCase().includes(term)
+    );
+  }, [purchasedFilms, search]);
 
-    if (authError || !user) {
-      setNotice("Your session expired. Please sign in again.");
-      return;
-    }
-
-    const { error: deleteError } = await supabase
-      .from("saved_films")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("film_id", filmId);
-
-    if (deleteError) {
-      setNotice(deleteError.message);
-      return;
-    }
-
-    setFilms((current) => current.filter((film) => film.id !== filmId));
-    setNotice("Removed from your saved films.");
-  }
+  const filteredSavedFilms = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return savedFilms;
+    return savedFilms.filter((f) =>
+      [f.title, f.description, f.genre].filter(Boolean).join(" ").toLowerCase().includes(term)
+    );
+  }, [savedFilms, search]);
 
   return (
     <section className="content-section">
       <header className="section-heading">
         <p className="eyebrow">Your collection</p>
         <h1>My library</h1>
-        <p>
-          Your saved films appear here. Saving a title does not grant paid
-          access.
-        </p>
+        <p>Browse your purchased products, purchased films, and saved titles.</p>
       </header>
 
       {notice && (
@@ -157,64 +213,138 @@ export default function LibrarySection({ search = "" }) {
         </p>
       )}
 
-      {!loading && !error && filteredFilms.length === 0 && (
-        <div className="empty-state">
-          <h2>
-            {search.trim() ? "No matching saved films" : "No saved films yet"}
-          </h2>
-          <p>
-            {search.trim()
-              ? "Try another search."
-              : "Save a film from the Media section to add it here."}
-          </p>
-        </div>
+      <div className="media-categories" style={{ marginBottom: "24px" }}>
+        <button
+          type="button"
+          className={activeTab === "products" ? "selected" : ""}
+          onClick={() => setActiveTab("products")}
+        >
+          Purchased Products ({purchasedProducts.length})
+        </button>
+        <button
+          type="button"
+          className={activeTab === "films" ? "selected" : ""}
+          onClick={() => setActiveTab("films")}
+        >
+          Purchased Films ({purchasedFilms.length})
+        </button>
+        <button
+          type="button"
+          className={activeTab === "saved" ? "selected" : ""}
+          onClick={() => setActiveTab("saved")}
+        >
+          Saved Films ({savedFilms.length})
+        </button>
+      </div>
+
+      {activeTab === "products" && (
+        <>
+          {filteredProducts.length === 0 ? (
+            <div className="empty-state">
+              <h2>No purchased products yet</h2>
+              <p>Items you buy from the Shop will appear here after checkout.</p>
+            </div>
+          ) : (
+            <div className="catalog-grid">
+              {filteredProducts.map((p) => {
+                const img = getProductImageUrl(p);
+                return (
+                  <article className="catalog-card" key={p.purchase_id || p.id}>
+                    <div className="catalog-art">
+                      {img ? (
+                        <img src={img} alt={p.title} loading="lazy" />
+                      ) : (
+                        <span aria-hidden="true">🛍️</span>
+                      )}
+                    </div>
+                    <div className="catalog-card-body">
+                      <div className="card-meta">
+                        <span>{p.category || "Product"}</span>
+                        <span>{formatPrice(p.price_cents)}</span>
+                      </div>
+                      <h2>{p.title}</h2>
+                      <p>{p.description || "An exclusive Sivilization item."}</p>
+                      <span className="access-label">✓ Purchased</span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
-      <div className="catalog-grid">
-        {filteredFilms.map((film) => {
-          const poster = getPosterUrl(film);
+      {activeTab === "films" && (
+        <>
+          {filteredPurchasedFilms.length === 0 ? (
+            <div className="empty-state">
+              <h2>No purchased films yet</h2>
+              <p>Paid films unlocked through checkout will appear here.</p>
+            </div>
+          ) : (
+            <div className="catalog-grid">
+              {filteredPurchasedFilms.map((f) => {
+                const poster = getPosterUrl(f);
+                return (
+                  <article className="catalog-card" key={f.purchase_id || f.id}>
+                    <div className="catalog-art">
+                      {poster ? (
+                        <img src={poster} alt={f.title} loading="lazy" />
+                      ) : (
+                        <span aria-hidden="true">🎬</span>
+                      )}
+                    </div>
+                    <div className="catalog-card-body">
+                      <div className="card-meta">
+                        <span>{f.genre || "Film"}</span>
+                        <span>{f.release_year || ""}</span>
+                      </div>
+                      <h2>{f.title}</h2>
+                      <p>{f.description || ""}</p>
+                      <span className="access-label">✓ Purchased Access</span>
+                    </div>
+                  </article>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
-          return (
-            <article className="catalog-card" key={film.id}>
-              <div className="catalog-art">
-                {poster ? (
-                  <img
-                    src={poster}
-                    alt={`${film.title} poster`}
-                    loading="lazy"
-                  />
-                ) : (
-                  <span aria-hidden="true">🎬</span>
-                )}
-              </div>
-
-              <div className="catalog-card-body">
-                <div className="card-meta">
-                  <span>{film.genre || "Film"}</span>
-                  <span>{film.release_year || "Year unknown"}</span>
-                </div>
-
-                <h2>{film.title}</h2>
-                <p>{film.description || "A Sivilization title."}</p>
-
-                <span className="access-label">
-                  {film.access_type === "free"
-                    ? "Free title"
-                    : "Access not included"}
-                </span>
-
-                <button
-                  className="button button-secondary"
-                  type="button"
-                  onClick={() => removeSavedFilm(film.id)}
-                >
-                  Remove saved title
-                </button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
+      {activeTab === "saved" && (
+        <>
+          {filteredSavedFilms.length === 0 ? (
+            <div className="empty-state">
+              <h2>No saved films</h2>
+              <p>Save titles from the Media section to bookmark them here.</p>
+            </div>
+          ) : (
+            <div className="catalog-grid">
+              {filteredSavedFilms.map((f) => {
+                const poster = getPosterUrl(f);
+                return (
+                  <article className="catalog-card" key={f.id}>
+                    <div className="catalog-art">
+                      {poster ? (
+                        <img src={poster} alt={f.title} loading="lazy" />
+                      ) : (
+                        <span aria-hidden="true">🎬</span>
+                      )}
+                    </div>
+                    <div className="catalog-card-body">
+                      <div className="card-meta">
+                        <span>{f.genre || "Film"}</span>
+                        <span>{f.release_year || ""}</span>
+                      </div>
+                      <h2>{f.title}</h2>
+                      <p>{f.description || ""}</p>
+                      <span className="access-label">Saved</span>
+                    </div>
+                  </article>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }

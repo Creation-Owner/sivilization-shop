@@ -13,10 +13,7 @@ export async function getPaddle() {
   return paddleInstance;
 }
 
-export async function buyItem({
-  priceId,
-  customData,
-}) {
+export async function buyItem({ priceId, customData }) {
   const paddle = await getPaddle();
 
   paddle.Checkout.open({
@@ -27,6 +24,20 @@ export async function buyItem({
       },
     ],
     customData,
-    successUrl: `${window.location.origin}/?payment=success`,
+    settings: {
+      successUrl: `${window.location.origin}/?payment=success`,
+    },
+  });
+}
+
+export async function openMultiItemCheckout({ items, customData }) {
+  const paddle = await getPaddle();
+
+  paddle.Checkout.open({
+    items,
+    customData,
+    settings: {
+      successUrl: `${window.location.origin}/?payment=success`,
+    },
   });
 }
