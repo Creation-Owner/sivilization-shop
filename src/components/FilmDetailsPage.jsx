@@ -728,7 +728,7 @@ function FilmDetailsPage({
                       <p>{comment.comment_text}</p>
                     </div>
 
-                    {comment.user_id === currentUserId && (\
+                    {comment.user_id === currentUserId && (
                       <button
                         className="comment-delete-button"
                         type="button"
