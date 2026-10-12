@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-const emptyForm = {
+const EMPTY_FORM = {
   id: null,
   title: "",
   description: "",
@@ -25,9 +25,7 @@ function formatCurrency(cents) {
 }
 
 function formatDate(dateValue) {
-  if (!dateValue) {
-    return "Unknown date";
-  }
+  if (!dateValue) return "Unknown date";
 
   return new Date(dateValue).toLocaleDateString(undefined, {
     year: "numeric",
@@ -37,15 +35,11 @@ function formatDate(dateValue) {
 }
 
 function formatFileSize(bytes) {
-  if (!bytes) {
-    return "0 KB";
-  }
+  if (!bytes) return "0 KB";
 
   const megabytes = bytes / 1024 / 1024;
 
-  if (megabytes >= 1) {
-    return `${megabytes.toFixed(1)} MB`;
-  }
+  if (megabytes >= 1) return `${megabytes.toFixed(1)} MB`;
 
   return `${Math.ceil(bytes / 1024)} KB`;
 }
@@ -58,21 +52,26 @@ function makeSafeFileName(fileName) {
 }
 
 function getCoverUrl(path) {
-  if (!path) {
-    return null;
-  }
+  if (!path) return null;
 
   const { data } = supabase.storage.from("games").getPublicUrl(path);
-
   return data?.publicUrl || null;
 }
 
-function GameStudioPage({ onBack }) {
-  const [checkingAdmin, setCheckingAdmin] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+function getErrorMessage(error) {
+  return (
+    error?.message ||
+    error?.context?.message ||
+    "An unexpected error occurred."
+  );
+}
+
+export default function GameStudioPage({ onBack }) {
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [hasStudioAccess, setHasStudioAccess] = useState(false);
   const [games, setGames] = useState([]);
   const [loadingGames, setLoadingGames] = useState(true);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState({ ...EMPTY_FORM });
   const [gameFile, setGameFile] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -86,8 +85,8 @@ function GameStudioPage({ onBack }) {
     setMessageType(type);
   }
 
-  async function checkAdminAndLoadGames() {
-    setCheckingAdmin(true);
+  async function checkAccessAndLoadGames() {
+    setCheckingAccess(true);
     setLoadingGames(true);
 
     try {
@@ -96,66 +95,62 @@ function GameStudioPage({ onBack }) {
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError) {
-        throw userError;
-      }
+      if (userError) throw userError;
 
       if (!user) {
-        setIsAdmin(false);
+        setHasStudioAccess(false);
+        setGames([]);
         return;
       }
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("is_admin")
+        .select("is_admin, is_owner")
         .eq("id", user.id)
         .maybeSingle();
 
-      if (profileError) {
-        throw profileError;
-      }
+      if (profileError) throw profileError;
 
-      const admin = profile?.is_admin === true;
-      setIsAdmin(admin);
+      const allowed =
+        profile?.is_admin === true || profile?.is_owner === true;
 
-      if (!admin) {
+      setHasStudioAccess(allowed);
+
+      if (!allowed) {
+        setGames([]);
         return;
       }
 
-      const { data: gamesData, error: gamesError } = await supabase
+      const { data, error } = await supabase
         .from("games")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (gamesError) {
-        throw gamesError;
-      }
+      if (error) throw error;
 
-      setGames(gamesData || []);
+      setGames(data || []);
     } catch (error) {
       console.error("Could not load Game Studio:", error);
-      showMessage(error.message || "Could not load Game Studio.", "error");
+      showMessage(`Could not load Game Studio: ${getErrorMessage(error)}`, "error");
     } finally {
-      setCheckingAdmin(false);
+      setCheckingAccess(false);
       setLoadingGames(false);
     }
   }
 
   useEffect(() => {
-    checkAdminAndLoadGames();
+    checkAccessAndLoadGames();
   }, []);
 
   function updateForm(field, value) {
-    setForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
+    setForm((current) => ({ ...current, [field]: value }));
   }
 
   function resetForm() {
-    setForm(emptyForm);
+    setForm({ ...EMPTY_FORM });
     setGameFile(null);
     setCoverFile(null);
+    setMessage("");
 
     if (formRef.current) {
       formRef.current.reset();
@@ -176,16 +171,15 @@ function GameStudioPage({ onBack }) {
     if (!allowed) {
       event.target.value = "";
       setGameFile(null);
-
       showMessage(
         "Choose a .zip file for Windows games or an .apk file for Android games.",
         "error",
       );
-
       return;
     }
 
     setGameFile(file);
+    setMessage("");
   }
 
   function handleCoverFileChange(event) {
@@ -199,13 +193,12 @@ function GameStudioPage({ onBack }) {
     if (!file.type.startsWith("image/")) {
       event.target.value = "";
       setCoverFile(null);
-
       showMessage("Choose a valid image file for the game cover.", "error");
-
       return;
     }
 
     setCoverFile(file);
+    setMessage("");
   }
 
   function startEditing(game) {
@@ -232,10 +225,7 @@ function GameStudioPage({ onBack }) {
     setCoverFile(null);
     setMessage("");
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function uploadFile(path, file) {
@@ -245,20 +235,16 @@ function GameStudioPage({ onBack }) {
       contentType: file.type || undefined,
     });
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
   }
 
   async function removeFile(path) {
-    if (!path) {
-      return;
-    }
+    if (!path) return;
 
     const { error } = await supabase.storage.from("games").remove([path]);
 
     if (error) {
-      console.error("Could not remove old game file:", error);
+      console.error("Could not remove game file:", error);
     }
   }
 
@@ -268,6 +254,14 @@ function GameStudioPage({ onBack }) {
 
     if (!form.title.trim()) {
       showMessage("Enter a game title.", "error");
+      return;
+    }
+
+    if (
+      form.accessType === "paid" &&
+      (!Number.isFinite(Number(form.price)) || Number(form.price) <= 0)
+    ) {
+      showMessage("Enter a valid price for a paid game.", "error");
       return;
     }
 
@@ -281,18 +275,11 @@ function GameStudioPage({ onBack }) {
       return;
     }
 
-    if (
-      form.accessType === "paid" &&
-      (!form.price || Number(form.price) <= 0)
-    ) {
-      showMessage("Enter a valid price for a paid game.", "error");
-      return;
-    }
-
     setSaving(true);
 
     let uploadedGamePath = null;
     let uploadedCoverPath = null;
+    let saveCompleted = false;
 
     try {
       const {
@@ -300,26 +287,19 @@ function GameStudioPage({ onBack }) {
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError) {
-        throw userError;
-      }
-
-      if (!user) {
-        throw new Error("You must be signed in as an administrator.");
-      }
+      if (userError) throw userError;
+      if (!user) throw new Error("Sign in to manage games.");
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("is_admin")
+        .select("is_admin, is_owner")
         .eq("id", user.id)
         .maybeSingle();
 
-      if (profileError) {
-        throw profileError;
-      }
+      if (profileError) throw profileError;
 
-      if (!profile?.is_admin) {
-        throw new Error("Only administrators can manage games.");
+      if (!profile?.is_admin && !profile?.is_owner) {
+        throw new Error("Only owners and admins can manage games.");
       }
 
       let gamePath =
@@ -330,40 +310,28 @@ function GameStudioPage({ onBack }) {
         const extension = gameFile.name.split(".").pop()?.toLowerCase();
         const safeName = makeSafeFileName(gameFile.name);
 
+        if (form.platform === "Windows" && extension !== "zip") {
+          throw new Error("Windows games must be uploaded as a .zip package.");
+        }
+
+        if (form.platform === "Android" && extension !== "apk") {
+          throw new Error("Android games must be uploaded as an .apk package.");
+        }
+
         uploadedGamePath = `packages/${crypto.randomUUID()}-${safeName}`;
-
-        if (
-          form.platform === "Windows" &&
-          extension !== "zip"
-        ) {
-          throw new Error(
-            "Windows games must be uploaded as a .zip package.",
-          );
-        }
-
-        if (
-          form.platform === "Android" &&
-          extension !== "apk"
-        ) {
-          throw new Error(
-            "Android games must be uploaded as an .apk package.",
-          );
-        }
-
         await uploadFile(uploadedGamePath, gameFile);
         gamePath = uploadedGamePath;
       }
 
       if (coverFile) {
         const safeName = makeSafeFileName(coverFile.name);
-
         uploadedCoverPath = `covers/${crypto.randomUUID()}-${safeName}`;
-
         await uploadFile(uploadedCoverPath, coverFile);
         coverPath = uploadedCoverPath;
       }
 
-      const gameData = {
+      const payload = {
+        ...(form.id ? { id: form.id } : {}),
         title: form.title.trim(),
         description: form.description.trim() || null,
         genre: form.genre,
@@ -375,84 +343,66 @@ function GameStudioPage({ onBack }) {
             ? Math.round(Number(form.price) * 100)
             : 0,
         delivery_type: form.deliveryType,
-        game_path:
-          form.deliveryType === "upload" ? gamePath : null,
+        game_path: form.deliveryType === "upload" ? gamePath : null,
         cover_path: coverPath,
         external_url:
-          form.deliveryType === "url"
-            ? form.externalUrl.trim()
-            : null,
+          form.deliveryType === "url" ? form.externalUrl.trim() : null,
         is_published: form.isPublished,
-        created_by: user.id,
-        updated_at: new Date().toISOString(),
       };
 
-      let savedGame;
+      // Paid saves go through the server so Paddle API secrets stay private.
+      // Free saves also use the Edge Function to keep owner/admin validation consistent.
+      const { data, error } = await supabase.functions.invoke("save-game", {
+        body: payload,
+      });
 
-      if (form.id) {
-        const { data, error } = await supabase
-          .from("games")
-          .update(gameData)
-          .eq("id", form.id)
-          .select()
-          .single();
-
-        if (error) {
-          throw error;
+      if (error) {
+        let detail = "";
+        try {
+          detail = (await error.context?.json?.())?.error || "";
+        } catch {
+          // Function error body was not JSON.
         }
-
-        savedGame = data;
-
-        if (uploadedGamePath && form.gamePath) {
-          await removeFile(form.gamePath);
-        }
-
-        if (uploadedCoverPath && form.coverPath) {
-          await removeFile(form.coverPath);
-        }
-
-        setGames((current) =>
-          current.map((game) => (game.id === savedGame.id ? savedGame : game)),
-        );
-
-        showMessage(
-          `${savedGame.title} was updated successfully.`,
-          "success",
-        );
-      } else {
-        const { data, error } = await supabase
-          .from("games")
-          .insert(gameData)
-          .select()
-          .single();
-
-        if (error) {
-          throw error;
-        }
-
-        savedGame = data;
-
-        setGames((current) => [savedGame, ...current]);
-
-        showMessage(
-          `${savedGame.title} was created successfully.`,
-          "success",
-        );
+        throw new Error(detail || getErrorMessage(error));
       }
+
+      if (data?.error) throw new Error(data.error);
+      if (!data?.game) throw new Error("save-game did not return the saved game.");
+
+      const savedGame = data.game;
+      saveCompleted = true;
+
+      if (uploadedGamePath && form.gamePath) {
+        await removeFile(form.gamePath);
+      }
+      if (uploadedCoverPath && form.coverPath) {
+        await removeFile(form.coverPath);
+      }
+
+      setGames((current) =>
+        form.id
+          ? current.map((item) => (item.id === savedGame.id ? savedGame : item))
+          : [savedGame, ...current],
+      );
+
+      showMessage(
+        form.accessType === "paid"
+          ? `${savedGame.title} saved. Paddle price ID: ${savedGame.paddle_price_id || data.paddle_price_id || "missing"}`
+          : `${savedGame.title} saved successfully.`,
+        "success",
+      );
 
       resetForm();
     } catch (error) {
       console.error("Could not save game:", error);
 
-      if (uploadedGamePath) {
-        await removeFile(uploadedGamePath);
+      // Preserve newly uploaded files if the DB save completed.
+      if (!saveCompleted) {
+        if (uploadedGamePath) await removeFile(uploadedGamePath);
+        if (uploadedCoverPath) await removeFile(uploadedCoverPath);
       }
 
-      if (uploadedCoverPath) {
-        await removeFile(uploadedCoverPath);
-      }
-
-      showMessage(error.message || "Could not save the game.", "error");
+      showMessage(`Could not save game: ${getErrorMessage(error)}`, "error");
     } finally {
       setSaving(false);
     }
@@ -472,9 +422,7 @@ function GameStudioPage({ onBack }) {
         .select()
         .single();
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       setGames((current) =>
         current.map((item) => (item.id === data.id ? data : item)),
@@ -488,7 +436,7 @@ function GameStudioPage({ onBack }) {
       );
     } catch (error) {
       showMessage(
-        error.message || "Could not update game publication status.",
+        `Could not update publication status: ${getErrorMessage(error)}`,
         "error",
       );
     }
@@ -496,61 +444,48 @@ function GameStudioPage({ onBack }) {
 
   async function deleteGame(game) {
     const confirmed = window.confirm(
-      `Delete "${game.title}"? This will permanently remove its database record and uploaded files.`,
+      `Delete "${game.title}"? This permanently removes its database record and uploaded files.`,
     );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     setDeletingId(game.id);
     setMessage("");
 
     try {
-      const { error } = await supabase
-        .from("games")
-        .delete()
-        .eq("id", game.id);
-
-      if (error) {
-        throw error;
-      }
+      const { error } = await supabase.from("games").delete().eq("id", game.id);
+      if (error) throw error;
 
       await removeFile(game.game_path);
       await removeFile(game.cover_path);
 
-      setGames((current) =>
-        current.filter((item) => item.id !== game.id),
-      );
+      setGames((current) => current.filter((item) => item.id !== game.id));
 
-      if (form.id === game.id) {
-        resetForm();
-      }
+      if (form.id === game.id) resetForm();
 
       showMessage(`${game.title} was deleted.`, "success");
     } catch (error) {
-      showMessage(error.message || "Could not delete the game.", "error");
+      showMessage(`Could not delete game: ${getErrorMessage(error)}`, "error");
     } finally {
       setDeletingId(null);
     }
   }
 
-  if (checkingAdmin) {
+  if (checkingAccess) {
     return (
       <section className="section-page">
-        <p className="media-status">Checking admin permissions...</p>
+        <p className="media-status">Checking owner/admin permissions...</p>
       </section>
     );
   }
 
-  if (!isAdmin) {
+  if (!hasStudioAccess) {
     return (
       <section className="section-page">
         <div className="admin-no-access">
           <p className="eyebrow">RESTRICTED</p>
-          <h1>Admin access required</h1>
-          <p>Only administrators can open and manage Game Studio.</p>
-
+          <h1>Owner or admin access required</h1>
+          <p>Only the owner or an administrator can manage Game Studio.</p>
           <button type="button" onClick={onBack}>
             Return to admin dashboard
           </button>
@@ -566,8 +501,8 @@ function GameStudioPage({ onBack }) {
           <p className="eyebrow">ADMINISTRATION / GAME STUDIO</p>
           <h1>Game Studio</h1>
           <p>
-            Upload, publish and manage Windows, Android and web games
-            separately from your films.
+            Upload, publish, and manage games. Paid games create a Paddle
+            product and one-time price when saved.
           </p>
         </div>
 
@@ -582,18 +517,12 @@ function GameStudioPage({ onBack }) {
             <p className="eyebrow">
               {form.id ? "EDIT GAME" : "ADD NEW GAME"}
             </p>
-
-            <h2>
-              {form.id ? `Editing: ${form.title}` : "Game information"}
-            </h2>
-
+            <h2>{form.id ? `Editing: ${form.title}` : "Game information"}</h2>
             <p>
-              Upload a Windows ZIP package, Android APK, or use an external
-              URL for a web game or store page.
+              Upload a Windows ZIP package, Android APK, or use an external URL.
             </p>
           </div>
-
-          <div className="admin-badge">Admin only</div>
+          <div className="admin-badge">Owner / admin</div>
         </div>
 
         <form
@@ -604,19 +533,15 @@ function GameStudioPage({ onBack }) {
           <div className="admin-form-section">
             <div className="admin-section-title">
               <span>01</span>
-
               <div>
                 <h3>Game details</h3>
-                <p>Information customers will see in the Games catalogue.</p>
+                <p>Information customers see in the Games catalogue.</p>
               </div>
             </div>
 
             <div className="admin-form-grid">
               <label className="admin-field admin-field-wide">
-                <span>
-                  Game title <b>*</b>
-                </span>
-
+                <span>Game title <b>*</b></span>
                 <input
                   type="text"
                   value={form.title}
@@ -629,7 +554,6 @@ function GameStudioPage({ onBack }) {
 
               <label className="admin-field">
                 <span>Genre</span>
-
                 <select
                   value={form.genre}
                   onChange={(event) => updateForm("genre", event.target.value)}
@@ -650,12 +574,9 @@ function GameStudioPage({ onBack }) {
 
               <label className="admin-field">
                 <span>Platform</span>
-
                 <select
                   value={form.platform}
-                  onChange={(event) =>
-                    updateForm("platform", event.target.value)
-                  }
+                  onChange={(event) => updateForm("platform", event.target.value)}
                   disabled={saving}
                 >
                   <option>Windows</option>
@@ -668,13 +589,10 @@ function GameStudioPage({ onBack }) {
 
               <label className="admin-field">
                 <span>Version</span>
-
                 <input
                   type="text"
                   value={form.version}
-                  onChange={(event) =>
-                    updateForm("version", event.target.value)
-                  }
+                  onChange={(event) => updateForm("version", event.target.value)}
                   placeholder="1.0.0"
                   disabled={saving}
                 />
@@ -682,12 +600,9 @@ function GameStudioPage({ onBack }) {
 
               <label className="admin-field">
                 <span>Access type</span>
-
                 <select
                   value={form.accessType}
-                  onChange={(event) =>
-                    updateForm("accessType", event.target.value)
-                  }
+                  onChange={(event) => updateForm("accessType", event.target.value)}
                   disabled={saving}
                 >
                   <option value="free">Free</option>
@@ -697,33 +612,26 @@ function GameStudioPage({ onBack }) {
 
               {form.accessType === "paid" && (
                 <label className="admin-field">
-                  <span>
-                    Price in USD <b>*</b>
-                  </span>
-
+                  <span>Price in USD <b>*</b></span>
                   <input
                     type="number"
                     min="0.01"
                     step="0.01"
                     value={form.price}
-                    onChange={(event) =>
-                      updateForm("price", event.target.value)
-                    }
+                    onChange={(event) => updateForm("price", event.target.value)}
                     placeholder="9.99"
                     disabled={saving}
                     required
                   />
+                  <small>Paddle product and one-time price are created on save.</small>
                 </label>
               )}
 
               <label className="admin-field admin-field-wide">
                 <span>Description</span>
-
                 <textarea
                   value={form.description}
-                  onChange={(event) =>
-                    updateForm("description", event.target.value)
-                  }
+                  onChange={(event) => updateForm("description", event.target.value)}
                   placeholder="Write a short description of the game..."
                   rows="5"
                   disabled={saving}
@@ -735,13 +643,9 @@ function GameStudioPage({ onBack }) {
           <div className="admin-form-section">
             <div className="admin-section-title">
               <span>02</span>
-
               <div>
                 <h3>Game delivery</h3>
-                <p>
-                  Use a package upload for Windows/Android or use an external
-                  URL for web games and store pages.
-                </p>
+                <p>Upload a Windows ZIP/Android APK or use an external URL.</p>
               </div>
             </div>
 
@@ -754,7 +658,6 @@ function GameStudioPage({ onBack }) {
               >
                 Upload package
               </button>
-
               <button
                 className={form.deliveryType === "url" ? "selected" : ""}
                 type="button"
@@ -775,19 +678,15 @@ function GameStudioPage({ onBack }) {
                     disabled={saving}
                     required={!form.gamePath}
                   />
-
                   <span className="admin-file-icon">🎮</span>
-
                   <strong>
                     {form.gamePath ? "Replace game package" : "Choose game package"}
                   </strong>
-
                   <small>
                     Windows: .zip
                     <br />
                     Android: .apk
                   </small>
-
                   {gameFile && (
                     <span className="selected-file">
                       {gameFile.name}
@@ -795,7 +694,6 @@ function GameStudioPage({ onBack }) {
                       {formatFileSize(gameFile.size)}
                     </span>
                   )}
-
                   {!gameFile && form.gamePath && (
                     <span className="selected-file">
                       Current package saved
@@ -806,40 +704,27 @@ function GameStudioPage({ onBack }) {
                 </label>
 
                 <div className="game-package-note">
-                  <h3>Package safely</h3>
-
+                  <h3>Private package storage</h3>
                   <p>
-                    Windows games should be uploaded as a ZIP archive containing
-                    the game folder and executable. Do not upload a standalone
-                    EXE file.
-                  </p>
-
-                  <p>
-                    Paid-game downloads will be protected when Stripe payment
-                    setup is added.
+                    Uploaded packages stay in the private games bucket.
+                    Download links are issued only after access is verified.
                   </p>
                 </div>
               </div>
             ) : (
               <label className="admin-field admin-field-wide">
-                <span>
-                  External game URL <b>*</b>
-                </span>
-
+                <span>External game URL <b>*</b></span>
                 <input
                   type="url"
                   value={form.externalUrl}
-                  onChange={(event) =>
-                    updateForm("externalUrl", event.target.value)
-                  }
+                  onChange={(event) => updateForm("externalUrl", event.target.value)}
                   placeholder="https://example.com/your-game"
                   disabled={saving}
                   required
                 />
-
                 <small className="admin-field-help">
-                  Use this for web games, itch.io pages, Google Play links, or
-                  another trusted game page.
+                  Use this for web games or trusted store pages. External URLs
+                  are opened directly by the browser.
                 </small>
               </label>
             )}
@@ -848,10 +733,9 @@ function GameStudioPage({ onBack }) {
           <div className="admin-form-section">
             <div className="admin-section-title">
               <span>03</span>
-
               <div>
                 <h3>Game cover</h3>
-                <p>Upload a cover image for the customer game catalogue.</p>
+                <p>Upload a cover image for the Games catalogue.</p>
               </div>
             </div>
 
@@ -863,19 +747,11 @@ function GameStudioPage({ onBack }) {
                   onChange={handleCoverFileChange}
                   disabled={saving}
                 />
-
                 <span className="admin-file-icon">▧</span>
-
                 <strong>
                   {form.coverPath ? "Replace cover image" : "Choose cover image"}
                 </strong>
-
-                <small>
-                  PNG, JPG or WebP
-                  <br />
-                  Optional
-                </small>
-
+                <small>PNG, JPG or WebP · Optional</small>
                 {coverFile && (
                   <span className="selected-file">
                     {coverFile.name}
@@ -883,13 +759,8 @@ function GameStudioPage({ onBack }) {
                     {formatFileSize(coverFile.size)}
                   </span>
                 )}
-
                 {!coverFile && form.coverPath && (
-                  <span className="selected-file">
-                    Current cover saved
-                    <br />
-                    Upload another image to replace it
-                  </span>
+                  <span className="selected-file">Current cover saved</span>
                 )}
               </label>
             </div>
@@ -898,7 +769,6 @@ function GameStudioPage({ onBack }) {
           <div className="admin-form-section">
             <div className="admin-section-title">
               <span>04</span>
-
               <div>
                 <h3>Visibility</h3>
                 <p>Publish now or keep the game hidden as a draft.</p>
@@ -909,33 +779,25 @@ function GameStudioPage({ onBack }) {
               <input
                 type="checkbox"
                 checked={form.isPublished}
-                onChange={(event) =>
-                  updateForm("isPublished", event.target.checked)
-                }
+                onChange={(event) => updateForm("isPublished", event.target.checked)}
                 disabled={saving}
               />
-
               <span className="publish-toggle-control" />
-
               <span>
                 <strong>
                   {form.isPublished ? "Publish this game" : "Keep as draft"}
                 </strong>
-
                 <small>
                   {form.isPublished
                     ? "Customers can see this game in the Games page."
-                    : "Only administrators can see this game in Game Studio."}
+                    : "Only owners/admins can see this game in Game Studio."}
                 </small>
               </span>
             </label>
           </div>
 
           <div className="admin-upload-footer">
-            <p className="admin-required-note">
-              <b>*</b> Required fields
-            </p>
-
+            <p className="admin-required-note"><b>*</b> Required fields</p>
             <div className="game-form-actions">
               {form.id && (
                 <button
@@ -947,12 +809,7 @@ function GameStudioPage({ onBack }) {
                   Cancel edit
                 </button>
               )}
-
-              <button
-                className="admin-upload-button"
-                type="submit"
-                disabled={saving}
-              >
+              <button className="admin-upload-button" type="submit" disabled={saving}>
                 {saving
                   ? "Saving game..."
                   : form.id
@@ -968,6 +825,7 @@ function GameStudioPage({ onBack }) {
             <p
               className={`admin-upload-message ${messageType}`}
               role="status"
+              aria-live="polite"
             >
               {message}
             </p>
@@ -982,11 +840,10 @@ function GameStudioPage({ onBack }) {
             <h2>My games</h2>
             <p>Manage drafts and published games from one place.</p>
           </div>
-
           <button
             className="game-refresh-button"
             type="button"
-            onClick={checkAdminAndLoadGames}
+            onClick={checkAccessAndLoadGames}
             disabled={loadingGames}
           >
             {loadingGames ? "Loading..." : "Refresh"}
@@ -998,10 +855,7 @@ function GameStudioPage({ onBack }) {
         ) : games.length === 0 ? (
           <div className="game-manager-empty">
             <h3>No games added yet</h3>
-            <p>
-              Add your first game above. Save it as a draft or publish it when
-              it is ready for customers.
-            </p>
+            <p>Add your first game above.</p>
           </div>
         ) : (
           <div className="game-manager-list">
@@ -1021,7 +875,6 @@ function GameStudioPage({ onBack }) {
                     }
                   >
                     {!coverUrl && <span>🎮</span>}
-
                     <span
                       className={
                         game.is_published
@@ -1042,7 +895,6 @@ function GameStudioPage({ onBack }) {
                           {game.version}
                         </p>
                       </div>
-
                       <strong>
                         {game.access_type === "paid"
                           ? formatCurrency(game.price_cents)
@@ -1050,18 +902,20 @@ function GameStudioPage({ onBack }) {
                       </strong>
                     </div>
 
+                    {game.access_type === "paid" && (
+                      <p className="game-manager-meta">
+                        Paddle: {game.paddle_price_id || "Price not created yet"}
+                      </p>
+                    )}
+
                     <p className="game-manager-description">
                       {game.description || "No description added yet."}
                     </p>
 
                     <div className="game-manager-meta">
                       <span>
-                        Delivery:{" "}
-                        {game.delivery_type === "upload"
-                          ? "Package upload"
-                          : "External URL"}
+                        Delivery: {game.delivery_type === "upload" ? "Package upload" : "External URL"}
                       </span>
-
                       <span>Created: {formatDate(game.created_at)}</span>
                     </div>
 
@@ -1070,10 +924,10 @@ function GameStudioPage({ onBack }) {
                         className="game-edit-button"
                         type="button"
                         onClick={() => startEditing(game)}
+                        disabled={saving}
                       >
                         Edit
                       </button>
-
                       <button
                         className={
                           game.is_published
@@ -1082,15 +936,15 @@ function GameStudioPage({ onBack }) {
                         }
                         type="button"
                         onClick={() => togglePublished(game)}
+                        disabled={saving}
                       >
                         {game.is_published ? "Unpublish" : "Publish"}
                       </button>
-
                       <button
                         className="game-delete-button"
                         type="button"
                         onClick={() => deleteGame(game)}
-                        disabled={deletingId === game.id}
+                        disabled={deletingId === game.id || saving}
                       >
                         {deletingId === game.id ? "Deleting..." : "Delete"}
                       </button>
@@ -1105,5 +959,3 @@ function GameStudioPage({ onBack }) {
     </section>
   );
 }
-
-export default GameStudioPage;

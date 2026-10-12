@@ -1,287 +1,395 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { buyItem } from "../paddle";
 
-function SubscriptionsSection() {
-  const [loading, setLoading] = useState(true);
-  const [plansLoading, setPlansLoading] = useState(true);
-  const [error, setError] = useState("");
+function formatPrice(priceCents, currency = "USD") {
+  const amount = Number(priceCents || 0) / 100;
+
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+    }).format(amount);
+  } catch {
+    return `$${amount.toFixed(2)}`;
+  }
+}
+
+function formatInterval(interval) {
+  const normalized = String(interval || "month").toLowerCase();
+
+  if (normalized === "year" || normalized === "yearly") {
+    return "year";
+  }
+
+  if (normalized === "week" || normalized === "weekly") {
+    return "week";
+  }
+
+  return "month";
+}
+
+function normalizeFeatures(features) {
+  if (Array.isArray(features)) {
+    return features.filter(Boolean);
+  }
+
+  if (typeof features === "string") {
+    try {
+      const parsed = JSON.parse(features);
+
+      if (Array.isArray(parsed)) {
+        return parsed.filter(Boolean);
+      }
+    } catch {
+      return features
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+function isSubscriptionActive(subscription) {
+  if (!subscription) {
+    return false;
+  }
+
+  const activeStatuses = ["active", "trialing", "past_due"];
+
+  if (!activeStatuses.includes(subscription.status)) {
+    return false;
+  }
+
+  if (!subscription.ends_at) {
+    return true;
+  }
+
+  return new Date(subscription.ends_at) > new Date();
+}
+
+export default function SubscriptionsSection() {
+  const [user, setUser] = useState(null);
   const [plans, setPlans] = useState([]);
-  const [currentPlan, setCurrentPlan] = useState(null);
-  const [activatingPlan, setActivatingPlan] = useState(null);
+  const [subscription, setSubscription] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [checkoutPlanId, setCheckoutPlanId] = useState(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  // Load active subscription for this user
-  useEffect(() => {
-    async function loadSubscription() {
-      setLoading(true);
-      setError("");
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setCurrentPlan(null);
-        setLoading(false);
-        return;
-      }
-
-      const { data, error: subError } = await supabase
-        .from("subscriptions")
-        .select("*")
-        .eq("user_id", user.id)
-        .in("status", ["active", "trialing"])
-        .order("created_at", { ascending: false })
-        .maybeSingle();
-
-      if (subError) {
-        setError(subError.message);
-        setCurrentPlan(null);
-        setLoading(false);
-        return;
-      }
-
-      if (data && data.ends_at) {
-        const endsAt = new Date(data.ends_at);
-        const now = new Date();
-        if (endsAt <= now) {
-          setCurrentPlan(null);
-          setLoading(false);
-          return;
-        }
-      }
-
-      setCurrentPlan(data || null);
-      setLoading(false);
-    }
-
-    loadSubscription();
-  }, []);
-
-  // Load subscription plans from admin-managed table
-  useEffect(() => {
-    async function loadPlans() {
-      setPlansLoading(true);
-
-      const { data, error: plansError } = await supabase
-        .from("subscription_plans")
-        .select("*")
-        .eq("is_active", true)
-        .order("sort_order", { ascending: true });
-
-      if (plansError) {
-        console.error("Could not load subscription plans:", plansError);
-        setPlans([]);
-        setPlansLoading(false);
-        return;
-      }
-
-      setPlans(data || []);
-      setPlansLoading(false);
-    }
-
-    loadPlans();
-  }, []);
-
-  async function handleActivatePlan(planKey) {
-    setActivatingPlan(planKey);
+  async function loadPage() {
+    setLoading(true);
     setError("");
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const [
+      { data: userResult, error: userError },
+      { data: plansResult, error: plansError },
+    ] = await Promise.all([
+      supabase.auth.getUser(),
+      supabase
+        .from("subscription_plans")
+        .select(`
+          id,
+          slug,
+          name,
+          price_cents,
+          currency,
+          billing_interval,
+          features,
+          is_active,
+          paddle_price_id
+        `)
+        .eq("is_active", true)
+        .order("price_cents", { ascending: true }),
+    ]);
 
-    if (!user) {
-      setError("You must be logged in to activate a plan.");
-      setActivatingPlan(null);
+    if (userError) {
+      setError(userError.message);
+      setLoading(false);
       return;
     }
 
-    // Cancel any existing active subscription first (simple approach)
-    if (currentPlan?.id) {
-      const { error: updateError } = await supabase
-        .from("subscriptions")
-        .update({ status: "canceled", ends_at: new Date().toISOString() })
-        .eq("id", currentPlan.id);
+    const currentUser = userResult.user ?? null;
 
-      if (updateError) {
-        setError(updateError.message);
-        setActivatingPlan(null);
-        return;
+    setUser(currentUser);
+
+    if (plansError) {
+      setError((previous) => previous || plansError.message);
+      setPlans([]);
+    } else {
+      setPlans(plansResult || []);
+    }
+
+    if (currentUser) {
+      const {
+        data: subscriptionResult,
+        error: subscriptionError,
+      } = await supabase
+        .from("subscriptions")
+        .select(`
+          id,
+          user_id,
+          plan_id,
+          plan_slug,
+          paddle_subscription_id,
+          status,
+          ends_at,
+          created_at,
+          updated_at,
+          subscription_plans (
+            id,
+            name,
+            slug,
+            billing_interval
+          )
+        `)
+        .eq("user_id", currentUser.id)
+        .in("status", ["active", "trialing", "past_due"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (subscriptionError) {
+        setError(
+          (previous) => previous || subscriptionError.message
+        );
+      } else {
+        setSubscription(
+          isSubscriptionActive(subscriptionResult)
+            ? subscriptionResult
+            : null
+        );
       }
     }
 
-    const now = new Date();
-    const endsAt = new Date(now);
-
-    // Default to 1 month; you can later make this depend on plan.interval
-    endsAt.setMonth(endsAt.getMonth() + 1);
-
-    const { data, error: insertError } = await supabase
-      .from("subscriptions")
-      .insert({
-        user_id: user.id,
-        plan_name: planKey,
-        status: "active",
-        started_at: now.toISOString(),
-        ends_at: endsAt.toISOString(),
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      setError(insertError.message);
-      setActivatingPlan(null);
-      return;
-    }
-
-    setCurrentPlan(data);
-    setActivatingPlan(null);
+    setLoading(false);
   }
 
-  async function handleCancelSubscription() {
-    if (!currentPlan?.id) {
-      return;
+  useEffect(() => {
+    loadPage();
+  }, []);
+
+  const hasActiveSubscription = isSubscriptionActive(subscription);
+
+  function getCurrentPlanName() {
+    if (!subscription) {
+      return "Membership";
     }
 
-    const confirmed = window.confirm(
-      "Cancel your subscription? It will remain active until the end of the current period.",
+    if (subscription.subscription_plans?.name) {
+      return subscription.subscription_plans.name;
+    }
+
+    const matchingPlan = plans.find(
+      (plan) =>
+        plan.id === subscription.plan_id ||
+        plan.slug === subscription.plan_slug
     );
 
-    if (!confirmed) {
-      return;
-    }
-
-    const { error } = await supabase
-      .from("subscriptions")
-      .update({
-        status: "canceled",
-        ends_at: new Date().toISOString(),
-      })
-      .eq("id", currentPlan.id);
-
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    setCurrentPlan((prev) =>
-      prev
-        ? {
-            ...prev,
-            status: "canceled",
-            ends_at: new Date().toISOString(),
-          }
-        : null,
+    return (
+      matchingPlan?.name ||
+      subscription.plan_slug ||
+      "Membership"
     );
   }
 
-  if (loading || plansLoading) {
+  async function handleSubscribe(plan) {
+    setError("");
+    setNotice("");
+
+    if (!user) {
+      setError("Log in before starting a membership.");
+      return;
+    }
+
+    if (hasActiveSubscription) {
+      setError(
+        "You already have an active membership. Manage it through your Paddle customer portal."
+      );
+      return;
+    }
+
+    if (!plan.paddle_price_id) {
+      setError(
+        `${plan.name} does not have a Paddle recurring price connected yet.`
+      );
+      return;
+    }
+
+    setCheckoutPlanId(plan.id);
+
+    try {
+      await buyItem({
+        priceId: plan.paddle_price_id,
+        customData: {
+          user_id: user.id,
+          plan_id: plan.id,
+          plan_slug: plan.slug,
+          payment_type: "subscription",
+        },
+      });
+
+      setNotice(
+        "Checkout opened. Your membership will appear after Paddle confirms the subscription."
+      );
+    } catch (checkoutError) {
+      console.error(
+        "Paddle subscription checkout error:",
+        checkoutError
+      );
+
+      setError(
+        checkoutError instanceof Error
+          ? checkoutError.message
+          : "Could not open Paddle Checkout."
+      );
+    } finally {
+      setCheckoutPlanId(null);
+    }
+  }
+
+  if (loading) {
     return (
       <section className="subscriptions-page section-page">
-        <h1>Subscriptions</h1>
-        <p>Loading subscription plans and your current plan…</p>
+        <header className="subscriptions-page-header">
+          <p className="eyebrow">SUBSCRIPTIONS</p>
+          <h1>Memberships</h1>
+        </header>
+
+        <p className="media-status">
+          Loading membership plans…
+        </p>
       </section>
     );
   }
 
-  const activePlan =
-    currentPlan &&
-    (currentPlan.status === "active" || currentPlan.status === "trialing") &&
-    (!currentPlan.ends_at || new Date(currentPlan.ends_at) > new Date())
-      ? currentPlan
-      : null;
-
-  function formatPrice(plan) {
-    const price = (plan.price_cents || 0) / 100;
-    const currency = plan.currency || "USD";
-    const interval = plan.interval || "month";
-
-    return `${currency === "USD" ? "$" : currency}${price.toFixed(2)} / ${interval}`;
-  }
-
   return (
     <section className="subscriptions-page section-page">
-      <h1>Subscriptions</h1>
+      <header className="subscriptions-page-header">
+        <p className="eyebrow">SUBSCRIPTIONS</p>
 
-      {error && <p className="media-status media-error">{error}</p>}
+        <h1>Choose your membership</h1>
 
-      {activePlan ? (
-        <div className="subscription-status-card">
-          <h2>Your current plan</h2>
-          <p className="eyebrow">
-            {plans.find((p) => p.plan_key === activePlan.plan_name)?.name ||
-              activePlan.plan_name}
-          </p>
+        <p>
+          Subscribe to unlock all free films and every film marked
+          as subscription-only while your plan remains active.
+        </p>
+      </header>
+
+      {error && (
+        <p className="media-status media-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {notice && (
+        <p className="media-status" role="status">
+          {notice}
+        </p>
+      )}
+
+      {hasActiveSubscription ? (
+        <section className="subscription-status-card">
+          <p className="eyebrow">ACTIVE MEMBERSHIP</p>
+
+          <h2>{getCurrentPlanName()}</h2>
+
           <p>
-            Status: <strong>{activePlan.status}</strong>
+            Status: <strong>{subscription.status}</strong>
           </p>
-          {activePlan.ends_at && (
+
+          {subscription.ends_at && (
             <p>
-              Active until:{" "}
-              {new Date(activePlan.ends_at).toLocaleDateString()}
+              Access until:{" "}
+              <strong>
+                {new Date(
+                  subscription.ends_at
+                ).toLocaleDateString()}
+              </strong>
             </p>
           )}
 
-          <button
-            className="media-watch-button"
-            type="button"
-            onClick={handleCancelSubscription}
-          >
-            Cancel subscription
-          </button>
-        </div>
-      ) : (
-        <div className="subscription-status-card">
-          <h2>No active subscription</h2>
-          <p>
-            Subscribe to unlock all subscription films in our library.
+          <p className="subscription-status-copy">
+            Your membership is active. You can watch free films and
+            all subscription-only films included in your plan.
           </p>
-        </div>
-      )}
 
-      {plans.length === 0 ? (
-        <p className="media-status">
-          No subscription plans are available at the moment.
-        </p>
+          <button
+            className="outline-action"
+            type="button"
+            onClick={loadPage}
+          >
+            Refresh membership status
+          </button>
+        </section>
+      ) : plans.length === 0 ? (
+        <section className="subscription-status-card">
+          <p className="eyebrow">MEMBERSHIPS</p>
+
+          <h2>No memberships available</h2>
+
+          <p>
+            An administrator has not published any active
+            subscription plans yet. Please check again later.
+          </p>
+        </section>
       ) : (
-        <div className="subscriptions-plans-grid">
+        <div className="subscription-plans-grid">
           {plans.map((plan) => {
-            const isCurrent = activePlan?.plan_name === plan.plan_key;
+            const features = normalizeFeatures(plan.features);
+            const isOpeningCheckout = checkoutPlanId === plan.id;
+            const hasPaddlePrice = Boolean(plan.paddle_price_id);
 
             return (
               <article
+                className="subscription-plan-card"
                 key={plan.id}
-                className={`subscription-plan-card ${
-                  isCurrent ? "current-plan" : ""
-                }`}
               >
-                <h3>{plan.name}</h3>
+                <p className="eyebrow">MEMBERSHIP PLAN</p>
+
+                <h2>{plan.name}</h2>
+
                 <p className="subscription-price">
-                  {formatPrice(plan)}
+                  {formatPrice(
+                    plan.price_cents,
+                    plan.currency || "USD"
+                  )}
+
+                  <span>
+                    {" "}
+                    / {formatInterval(plan.billing_interval)}
+                  </span>
                 </p>
 
-                <ul className="subscription-features">
-                  {(plan.features || []).map((feature, idx) => (
-                    <li key={idx}>{feature}</li>
-                  ))}
-                </ul>
-
-                {isCurrent ? (
-                  <p className="subscription-current-label">
-                    Your current plan
-                  </p>
+                {features.length > 0 ? (
+                  <ul className="subscription-features">
+                    {features.map((feature, index) => (
+                      <li key={`${plan.id}-${index}`}>
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
-                  <button
-                    className="media-watch-button"
-                    type="button"
-                    onClick={() => handleActivatePlan(plan.plan_key)}
-                    disabled={activatingPlan === plan.plan_key}
-                  >
-                    {activatingPlan === plan.plan_key
-                      ? "Activating…"
-                      : "Choose this plan"}
-                  </button>
+                  <p className="subscription-empty-features">
+                    Includes access to all films marked as
+                    subscription-only.
+                  </p>
                 )}
+
+                <button
+                  className="media-watch-button"
+                  type="button"
+                  onClick={() => handleSubscribe(plan)}
+                  disabled={isOpeningCheckout || !hasPaddlePrice}
+                >
+                  {!hasPaddlePrice
+                    ? "Paddle price needed"
+                    : isOpeningCheckout
+                      ? "Opening checkout…"
+                      : `Subscribe to ${plan.name}`}
+                </button>
               </article>
             );
           })}
@@ -290,5 +398,3 @@ function SubscriptionsSection() {
     </section>
   );
 }
-
-export default SubscriptionsSection;

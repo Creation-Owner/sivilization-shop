@@ -1,6 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 import AdminFilmUpload from "./AdminFilmUpload";
+
+const categories = [
+  "All films",
+  "Trending",
+  "New releases",
+  "Action",
+  "Adventure",
+  "Anime",
+  "Cartoon",
+  "Comedy",
+  "Crime",
+  "Documentary",
+  "Drama",
+  "Fantasy",
+  "Horror",
+  "Mystery",
+  "Romance",
+  "Sci-Fi",
+  "Thriller",
+];
 
 const sampleFilms = [
   {
@@ -15,6 +35,7 @@ const sampleFilms = [
     video_url:
       "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
     access_type: "free",
+    is_sample: true,
   },
   {
     id: "sample-midnight-streets",
@@ -28,6 +49,7 @@ const sampleFilms = [
     video_url:
       "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
     access_type: "free",
+    is_sample: true,
   },
   {
     id: "sample-beyond-valley",
@@ -41,97 +63,65 @@ const sampleFilms = [
     video_url:
       "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
     access_type: "free",
-  },
-  {
-    id: "sample-silent-echoes",
-    title: "Silent Echoes",
-    genre: "Mystery",
-    year: "2024",
-    duration: "1h 47m",
-    rating: "7.9",
-    color: "#422006",
-    progress: 0,
-    access_type: "free",
-  },
-  {
-    id: "sample-blue-room",
-    title: "The Blue Room",
-    genre: "Drama",
-    year: "2026",
-    duration: "1h 51m",
-    rating: "8.1",
-    color: "#164e63",
-    progress: 0,
-    access_type: "free",
-  },
-  {
-    id: "sample-after-storm",
-    title: "After the Storm",
-    genre: "Romance",
-    year: "2025",
-    duration: "1h 42m",
-    rating: "7.8",
-    color: "#831843",
-    progress: 0,
-    access_type: "free",
+    is_sample: true,
   },
 ];
 
-const categories = [
-  "All films",
-  "Trending",
-  "New releases",
-  "Action",
-  "Drama",
-  "Sci-Fi",
-  "Documentary",
-];
+function getPosterUrl(row) {
+  if (row.poster_url) return row.poster_url;
+  if (!row.poster_path) return null;
 
-function getStorageUrl(path) {
-  if (!path) {
-    return null;
-  }
-
+  // Posters only. Do not create public video URLs here.
   const { data } = supabase.storage
     .from("films")
-    .getPublicUrl(path);
+    .getPublicUrl(row.poster_path);
 
   return data?.publicUrl || null;
 }
 
-function convertDatabaseFilm(film) {
+function convertDatabaseFilm(row) {
+  const accessType =
+    row.is_paid === true
+      ? "paid"
+      : String(row.access_type || "free").toLowerCase();
+
   return {
-    id: film.id,
-    title: film.title || "Untitled film",
-    description: film.description || "",
-    genre: film.genre || "Film",
-    year: film.release_year
-      ? String(film.release_year)
-      : "Unknown",
-    duration: film.duration || "Unknown",
-    rating: String(film.rating ?? "0"),
+    id: row.id,
+    title: row.title || "Untitled film",
+    description: row.description || "",
+    genre: row.genre || "Film",
+    year: row.release_year ? String(row.release_year) : "Unknown",
+    duration: row.duration || "Unknown",
+    rating: String(row.rating ?? "0"),
     color: "#172554",
     progress: 0,
-    video_url: getStorageUrl(film.video_path),
-    video_path: film.video_path || null,
-    poster_path: film.poster_path || null,
-    poster_url: getStorageUrl(film.poster_path),
-    access_type: film.access_type || "free",
-    price_cents: Number(film.price_cents) || 0,
-    is_published: film.is_published === true,
-    created_at: film.created_at || null,
+
+    // Preserve only the path; the detail page asks get-film-stream to verify access.
+    video_path: row.video_path || null,
+
+    // Keep direct URLs only for legacy external video records.
+    video_url: row.video_url || null,
+
+    poster_path: row.poster_path || null,
+    poster_url: getPosterUrl(row),
+
+    access_type: accessType,
+    price_cents: Number(row.price_cents || 0),
+    paddle_price_id: row.paddle_price_id || null,
+    is_published: row.is_published === true,
+    is_sample: false,
+    created_at: row.created_at || null,
   };
 }
 
 function getAccessLabel(film) {
-  if (film.access_type === "rent") {
-    return "RENT";
+  if (film.access_type === "paid" || film.access_type === "rent") {
+    return film.price_cents
+      ? `$${(film.price_cents / 100).toFixed(2)}`
+      : "PAID";
   }
 
-  if (film.access_type === "subscription") {
-    return "SUB";
-  }
-
+  if (film.access_type === "subscription") return "SUB";
   return "FREE";
 }
 
@@ -149,19 +139,13 @@ function getPosterStyle(film) {
   };
 }
 
-function FilmCard({ film, onOpenFilm, showProgress = false }) {
+function FilmCard({ film, onOpenFilm }) {
   return (
-    <article
+    <button
+      type="button"
       className="media-film-card clickable-film-card"
-      role="button"
-      tabIndex={0}
       onClick={() => onOpenFilm(film)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpenFilm(film);
-        }
-      }}
+      aria-label={`Open ${film.title}`}
     >
       <div className="media-film-poster" style={getPosterStyle(film)}>
         <div className="media-film-top">
@@ -171,9 +155,9 @@ function FilmCard({ film, onOpenFilm, showProgress = false }) {
           </span>
         </div>
 
-        <div className="media-play-button media-play-icon" aria-hidden="true">
+        <span className="media-play-button media-play-icon" aria-hidden="true">
           ▶
-        </div>
+        </span>
 
         <div className="media-film-bottom">
           <span>★ {film.rating}</span>
@@ -183,48 +167,16 @@ function FilmCard({ film, onOpenFilm, showProgress = false }) {
 
       <div className="media-film-body">
         <h3>{film.title}</h3>
-
         <p>
           {film.genre} · {film.duration}
         </p>
-
-        {film.access_type === "rent" && (
-          <strong>
-            ${(film.price_cents / 100).toFixed(2)} rental
-          </strong>
-        )}
-
-        {film.access_type === "subscription" && (
-          <strong>Subscription only</strong>
-        )}
-
-        {showProgress && (
-          <div className="media-progress-wrapper">
-            <div className="media-progress-track">
-              <div
-                className="media-progress-value"
-                style={{ width: `${film.progress}%` }}
-              />
-            </div>
-
-            <span>{film.progress}% watched</span>
-          </div>
-        )}
       </div>
-    </article>
+    </button>
   );
 }
 
-function MediaRow({
-  title,
-  subtitle,
-  items,
-  showProgress = false,
-  onOpenFilm,
-}) {
-  if (items.length === 0) {
-    return null;
-  }
+function MediaRow({ title, subtitle, films, onOpenFilm }) {
+  if (!films.length) return null;
 
   return (
     <section className="media-row-section">
@@ -233,16 +185,13 @@ function MediaRow({
           <p className="eyebrow">{subtitle}</p>
           <h2>{title}</h2>
         </div>
-
-        <button type="button">View all</button>
       </div>
 
       <div className="media-film-grid">
-        {items.map((film) => (
+        {films.map((film) => (
           <FilmCard
-            key={film.id || film.title}
+            key={film.id}
             film={film}
-            showProgress={showProgress}
             onOpenFilm={onOpenFilm}
           />
         ))}
@@ -251,177 +200,153 @@ function MediaRow({
   );
 }
 
-function MediaSection({ onOpenFilm }) {
+function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
   const [databaseFilms, setDatabaseFilms] = useState([]);
-  const [selectedCategory, setSelectedCategory] =
-    useState("All films");
+  const [selectedCategory, setSelectedCategory] = useState("All films");
   const [isAdmin, setIsAdmin] = useState(false);
   const [loadingFilms, setLoadingFilms] = useState(true);
   const [filmsError, setFilmsError] = useState("");
 
   useEffect(() => {
-    async function loadUserAndFilms() {
+    let cancelled = false;
+
+    async function loadFilms() {
       setLoadingFilms(true);
       setFilmsError("");
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-      if (user) {
-        const { data: profile, error: profileError } =
-          await supabase
+        if (authError) throw authError;
+
+        if (user) {
+          const { data: profile, error: profileError } = await supabase
             .from("profiles")
-            .select("is_admin")
+            .select("is_admin, is_owner")
             .eq("id", user.id)
             .maybeSingle();
 
-        if (profileError) {
-          console.error(
-            "Could not check admin status:",
-            profileError,
-          );
+          if (profileError) throw profileError;
+
+          if (!cancelled) {
+            setIsAdmin(
+              profile?.is_admin === true || profile?.is_owner === true,
+            );
+          }
+        } else if (!cancelled) {
           setIsAdmin(false);
-        } else {
-          setIsAdmin(profile?.is_admin === true);
         }
-      } else {
-        setIsAdmin(false);
-      }
 
-      const { data, error } = await supabase
-        .from("films")
-        .select("*")
-        .eq("is_published", true)
-        .order("created_at", {
-          ascending: false,
-        });
+        const { data, error } = await supabase
+          .from("films")
+          .select("*")
+          .eq("is_published", true)
+          .order("created_at", { ascending: false });
 
-      console.log("Published films query:", {
-        data,
-        error,
-      });
+        if (error) throw error;
 
-      if (error) {
+        if (!cancelled) {
+          setDatabaseFilms((data || []).map(convertDatabaseFilm));
+        }
+      } catch (error) {
         console.error("Could not load published films:", error);
-        setFilmsError(error.message);
-        setDatabaseFilms([]);
-        setLoadingFilms(false);
-        return;
+
+        if (!cancelled) {
+          setFilmsError(error.message || "Could not load films.");
+          setDatabaseFilms([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingFilms(false);
       }
-
-      const convertedFilms = (data || []).map(
-        convertDatabaseFilm,
-      );
-
-      setDatabaseFilms(convertedFilms);
-      setLoadingFilms(false);
     }
 
-    loadUserAndFilms();
+    loadFilms();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const allFilms = [...databaseFilms, ...sampleFilms];
-
-  const filteredFilms =
-    selectedCategory === "All films"
-      ? allFilms
-      : selectedCategory === "New releases"
-        ? allFilms
-        : allFilms.filter(
-            (film) => film.genre === selectedCategory,
-          );
-
-  const filteredDatabaseFilms =
-    selectedCategory === "All films"
-      ? databaseFilms
-      : selectedCategory === "New releases"
-        ? databaseFilms
-        : databaseFilms.filter(
-            (film) => film.genre === selectedCategory,
-          );
-
-  const fourteenDaysAgo = new Date();
-  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
-
-  const newReleases = filteredFilms.filter((film) => {
-    if (!film.created_at) {
-      return film.year === "2026";
-    }
-
-    return new Date(film.created_at) >= fourteenDaysAgo;
-  });
-
-  const continueWatching = filteredFilms.filter(
-    (film) => Number(film.progress) > 0,
+  const allFilms = useMemo(
+    () => [...databaseFilms, ...sampleFilms],
+    [databaseFilms],
   );
 
-  const recommended = filteredFilms.filter(
+  const visibleFilms = useMemo(() => {
+    let result = allFilms;
+
+    if (
+      selectedCategory !== "All films" &&
+      selectedCategory !== "Trending" &&
+      selectedCategory !== "New releases"
+    ) {
+      result = result.filter(
+        (film) =>
+          film.genre.toLowerCase() === selectedCategory.toLowerCase(),
+      );
+    }
+
+    const query = search.trim().toLowerCase();
+    if (query) {
+      result = result.filter((film) =>
+        `${film.title} ${film.genre} ${film.description}`
+          .toLowerCase()
+          .includes(query),
+      );
+    }
+
+    return result;
+  }, [allFilms, selectedCategory, search]);
+
+  const visibleDatabaseFilms = useMemo(
+    () => visibleFilms.filter((film) => !film.is_sample),
+    [visibleFilms],
+  );
+
+  const newReleases = visibleFilms.filter((film) => {
+    if (!film.created_at) return film.year === "2026";
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    return new Date(film.created_at) >= cutoff;
+  });
+
+  const recommended = visibleFilms.filter(
     (film) => Number(film.rating) >= 8.1,
   );
 
   function handleOpenFilm(film) {
-    onOpenFilm(film, allFilms);
-  }
-
-  function handleWatchFeatured() {
-    const featuredFilm = allFilms.find(
-      (film) => film.title === "The Last Horizon",
-    );
-
-    if (featuredFilm) {
-      handleOpenFilm(featuredFilm);
+    if (typeof onOpenFilm !== "function") {
+      console.error(
+        "MediaSection requires an onOpenFilm callback from App.jsx.",
+      );
+      return;
     }
+
+    onOpenFilm(film, allFilms);
   }
 
   return (
     <section className="media-page section-page">
-      <div className="media-hero">
+      <header className="media-hero">
         <div className="media-hero-content">
-          <p className="eyebrow">FEATURED FILM</p>
-
-          <h1>The Last Horizon</h1>
-
-          <div className="media-meta">
-            <span>2026</span>
-            <span>2h 18m</span>
-            <span>★ 8.7</span>
-            <span>Sci-Fi</span>
-          </div>
-
+          <p className="eyebrow">SIVILIZATION CINEMA</p>
+          <h1>Films, cartoons & dramas</h1>
           <p className="media-hero-description">
-            Humanity has one final chance to reach a distant world
-            before Earth becomes uninhabitable.
+            Open a film to see its details, authorized playback, related films,
+            and comments.
           </p>
-
-          <div className="media-hero-actions">
-            <button
-              className="media-watch-button"
-              type="button"
-              onClick={handleWatchFeatured}
-            >
-              ▶ Watch now
-            </button>
-
-            <button
-              className="media-list-button"
-              type="button"
-            >
-              + Add to list
-            </button>
-          </div>
         </div>
-      </div>
+      </header>
 
       <div className="media-categories">
         {categories.map((category) => (
           <button
             key={category}
-            className={
-              selectedCategory === category
-                ? "selected"
-                : ""
-            }
+            className={selectedCategory === category ? "selected" : ""}
             type="button"
             onClick={() => setSelectedCategory(category)}
           >
@@ -431,61 +356,55 @@ function MediaSection({ onOpenFilm }) {
       </div>
 
       {loadingFilms && (
-        <p className="media-status">
-          Loading published films...
-        </p>
-      )}
-
-      {!loadingFilms && !filmsError && (
-        <p className="media-status">
-          Published uploads found: {databaseFilms.length}
-        </p>
+        <p className="media-status">Loading published films…</p>
       )}
 
       {filmsError && (
         <p className="media-status media-error">
-          Supabase could not load published films: {filmsError}
+          Could not load films: {filmsError}
         </p>
       )}
 
-      {!loadingFilms &&
-        !filmsError &&
-        databaseFilms.length === 0 && (
-          <p className="media-status">
-            No published uploads were returned by Supabase yet.
-          </p>
-        )}
+      {!loadingFilms && !filmsError && databaseFilms.length === 0 && (
+        <p className="media-status">No published films found.</p>
+      )}
 
       <MediaRow
         title="Published uploads"
-        subtitle="Films added from Film Studio"
-        items={filteredDatabaseFilms}
-        onOpenFilm={handleOpenFilm}
-      />
-
-      <MediaRow
-        title="Continue watching"
-        subtitle="Pick up where you left off"
-        items={continueWatching}
-        showProgress
+        subtitle="Films from Film Studio"
+        films={visibleDatabaseFilms}
         onOpenFilm={handleOpenFilm}
       />
 
       <MediaRow
         title="New releases"
-        subtitle="Fresh stories worth watching"
-        items={newReleases}
+        subtitle="Recently published"
+        films={newReleases}
         onOpenFilm={handleOpenFilm}
       />
 
       <MediaRow
-        title="Recommended for you"
-        subtitle="Based on your viewing history"
-        items={recommended}
+        title="Recommended"
+        subtitle="Popular with viewers"
+        films={recommended}
         onOpenFilm={handleOpenFilm}
       />
 
-      {isAdmin && <AdminFilmUpload />}
+      <MediaRow
+        title="All films"
+        subtitle="Explore the catalogue"
+        films={visibleFilms}
+        onOpenFilm={handleOpenFilm}
+      />
+
+      {isAdmin && (
+        <AdminFilmUpload
+          onUploaded={() => {
+            // Reloading the page refreshes the catalogue after an upload.
+            window.location.reload();
+          }}
+        />
+      )}
     </section>
   );
 }

@@ -1,51 +1,181 @@
 import { useState } from "react";
+import { Upload } from "tus-js-client";
 import { supabase } from "../supabaseClient";
 
-function AdminFilmUpload() {
+const BUCKET = "films-free";
+const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
+const MAX_POSTER_SIZE = 10 * 1024 * 1024;
+
+const VIDEO_TYPES = new Set([
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+]);
+
+const POSTER_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+const GENRES = [
+  "Action",
+  "Adventure",
+  "Anime",
+  "Cartoon",
+  "Comedy",
+  "Crime",
+  "Documentary",
+  "Drama",
+  "Fantasy",
+  "Horror",
+  "Mystery",
+  "Romance",
+  "Sci-Fi",
+  "Thriller",
+];
+
+function safeFileName(fileName) {
+  const cleaned = fileName
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return cleaned || "upload";
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) {
+    return "0 KB";
+  }
+
+  const megabytes = bytes / (1024 * 1024);
+
+  return megabytes >= 1
+    ? `${megabytes.toFixed(1)} MB`
+    : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+function getTusConfig() {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+
+  const apiKey =
+    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !apiKey) {
+    throw new Error(
+      "Supabase URL or public API key is not configured."
+    );
+  }
+
+  const url = new URL(supabaseUrl);
+  const projectRef = url.hostname.split(".")[0];
+
+  const endpoint = url.hostname.endsWith(".supabase.co")
+    ? `https://${projectRef}.storage.supabase.co/storage/v1/upload/resumable`
+    : `${supabaseUrl}/storage/v1/upload/resumable`;
+
+  return { endpoint, apiKey };
+}
+
+async function uploadResumable(file, path, onProgress) {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    throw sessionError;
+  }
+
+  if (!session?.access_token) {
+    throw new Error("Your session expired. Sign in again.");
+  }
+
+  const { endpoint, apiKey } = getTusConfig();
+
+  return new Promise((resolve, reject) => {
+    const upload = new Upload(file, {
+      endpoint,
+      chunkSize: TUS_CHUNK_SIZE,
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      removeFingerprintOnSuccess: true,
+      headers: {
+        apikey: apiKey,
+        authorization: `Bearer ${session.access_token}`,
+        "x-upsert": "false",
+      },
+      metadata: {
+        bucketName: BUCKET,
+        objectName: path,
+        contentType: file.type || "application/octet-stream",
+        cacheControl: "3600",
+      },
+      onProgress(bytesUploaded, bytesTotal) {
+        const percent =
+          bytesTotal > 0
+            ? Math.round((bytesUploaded / bytesTotal) * 100)
+            : 0;
+
+        onProgress?.(percent);
+      },
+      onError: reject,
+      onSuccess: resolve,
+    });
+
+    upload
+      .findPreviousUploads()
+      .then((previousUploads) => {
+        if (previousUploads.length > 0) {
+          upload.resumeFromPreviousUpload(previousUploads[0]);
+        }
+
+        upload.start();
+      })
+      .catch(reject);
+  });
+}
+
+export default function AdminFilmUpload({ onUploaded }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [genre, setGenre] = useState("Drama");
   const [releaseYear, setReleaseYear] = useState("");
   const [duration, setDuration] = useState("");
+
   const [accessType, setAccessType] = useState("free");
-  const [priceCents, setPriceCents] = useState(0);
+  const [priceUsd, setPriceUsd] = useState("");
+  const [paddlePriceId, setPaddlePriceId] = useState("");
+
   const [videoFile, setVideoFile] = useState(null);
   const [posterFile, setPosterFile] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState("");
+  const [messageType, setMessageType] = useState("info");
 
   function showMessage(text, type = "info") {
     setMessage(text);
     setMessageType(type);
   }
 
-  function formatFileSize(bytes) {
-    if (!bytes) return "0 KB";
-    const megabytes = bytes / 1024 / 1024;
-    return megabytes >= 1
-      ? `${megabytes.toFixed(1)} MB`
-      : `${Math.ceil(bytes / 1024)} KB`;
-  }
-
-  function makeSafeFileName(fileName) {
-    return fileName
-      .toLowerCase()
-      .replace(/[^a-z0-9.]+/g, "-")
-      .replace(/-+/g, "-");
-  }
-
   function handleVideoChange(event) {
     const file = event.target.files?.[0] || null;
+
     if (!file) {
       setVideoFile(null);
       return;
     }
 
-    if (!file.type.startsWith("video/")) {
-      showMessage("Please choose a valid video file.", "error");
+    if (!VIDEO_TYPES.has(file.type)) {
       event.target.value = "";
       setVideoFile(null);
+      showMessage(
+        "Choose an MP4, WebM, or MOV video file.",
+        "error"
+      );
       return;
     }
 
@@ -55,15 +185,29 @@ function AdminFilmUpload() {
 
   function handlePosterChange(event) {
     const file = event.target.files?.[0] || null;
+
     if (!file) {
       setPosterFile(null);
       return;
     }
 
-    if (!file.type.startsWith("image/")) {
-      showMessage("Please choose a valid poster image.", "error");
+    if (!POSTER_TYPES.has(file.type)) {
       event.target.value = "";
       setPosterFile(null);
+      showMessage(
+        "Choose a JPG, PNG, or WebP poster image.",
+        "error"
+      );
+      return;
+    }
+
+    if (file.size > MAX_POSTER_SIZE) {
+      event.target.value = "";
+      setPosterFile(null);
+      showMessage(
+        "Poster images must be 10 MB or smaller.",
+        "error"
+      );
       return;
     }
 
@@ -71,120 +215,194 @@ function AdminFilmUpload() {
     showMessage("");
   }
 
+  function handleAccessTypeChange(event) {
+    const nextAccessType = event.target.value;
+
+    setAccessType(nextAccessType);
+
+    if (nextAccessType === "free") {
+      setPriceUsd("");
+      setPaddlePriceId("");
+    }
+  }
+
   async function handleUpload(event) {
     event.preventDefault();
 
     if (!title.trim()) {
-      showMessage("Please enter a film title.", "error");
+      showMessage("Enter a film title.", "error");
       return;
     }
 
     if (!videoFile) {
-      showMessage("Please choose a video file.", "error");
+      showMessage("Choose a video file.", "error");
       return;
     }
 
-    if (accessType === "rent" && priceCents <= 0) {
-      showMessage("Enter a rental price greater than $0.", "error");
+    const priceInDollars = Number(priceUsd || 0);
+
+    if (
+      accessType === "paid" &&
+      (!Number.isFinite(priceInDollars) || priceInDollars <= 0)
+    ) {
+      showMessage(
+        "Enter a price greater than $0.00 for a paid film.",
+        "error"
+      );
+      return;
+    }
+
+    if (accessType === "paid" && !paddlePriceId.trim()) {
+      showMessage(
+        "Enter the Paddle price ID for this paid film.",
+        "error"
+      );
       return;
     }
 
     setLoading(true);
-    showMessage("Uploading your film...", "info");
+    setProgress(0);
+    showMessage("Checking administrator access…");
 
     let videoPath = null;
     let posterPath = null;
+    let filmSaved = false;
 
     try {
       const {
         data: { user },
+        error: userError,
       } = await supabase.auth.getUser();
 
-      if (!user) {
-        throw new Error("You must be signed in as an administrator.");
+      if (userError) {
+        throw userError;
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("is_admin")
-        .eq("id", user.id)
-        .single();
+      if (!user) {
+        throw new Error("Sign in with an administrator account.");
+      }
 
-      if (profileError) throw profileError;
-      if (!profile?.is_admin) {
+      const { data: profile, error: profileError } =
+        await supabase
+          .from("profiles")
+          .select("is_admin")
+          .eq("id", user.id)
+          .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      if (profile?.is_admin !== true) {
         throw new Error("Only administrators can upload films.");
       }
 
-      const fileId = crypto.randomUUID();
-      videoPath = `videos/${fileId}-${makeSafeFileName(videoFile.name)}`;
+      const uploadId = crypto.randomUUID();
 
-      const { error: videoError } = await supabase.storage
-        .from("films")
-        .upload(videoPath, videoFile, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: videoFile.type,
-        });
+      videoPath = `videos/${uploadId}-${safeFileName(
+        videoFile.name
+      )}`;
 
-      if (videoError) throw videoError;
+      showMessage("Uploading video… 0%");
 
-      if (posterFile) {
-        const posterId = crypto.randomUUID();
-        posterPath = `posters/${posterId}-${makeSafeFileName(posterFile.name)}`;
-
-        const { error: posterError } = await supabase.storage
-          .from("films")
-          .upload(posterPath, posterFile, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: posterFile.type,
-          });
-
-        if (posterError) throw posterError;
-      }
-
-      const { error: filmError } = await supabase.from("films").insert({
-        title: title.trim(),
-        description: description.trim() || null,
-        genre,
-        release_year: Number(releaseYear) || null,
-        duration: duration.trim() || null,
-        rating: 0,
-        video_path: videoPath,
-        poster_path: posterPath,
-        created_by: user.id,
-        access_type: accessType,
-        price_cents: accessType === "rent" ? priceCents : 0,
-        is_published: true,
+      await uploadResumable(videoFile, videoPath, (percent) => {
+        setProgress(percent);
+        showMessage(`Uploading video… ${percent}%`);
       });
 
-      if (filmError) throw filmError;
+      if (posterFile) {
+        posterPath = `posters/${uploadId}-${safeFileName(
+          posterFile.name
+        )}`;
+
+        showMessage("Uploading poster…");
+
+        await uploadResumable(posterFile, posterPath);
+      }
+
+      showMessage("Saving film as an unpublished draft…");
+
+      const priceCents =
+        accessType === "paid"
+          ? Math.round(priceInDollars * 100)
+          : 0;
+
+      const { error: filmError } = await supabase
+        .from("films")
+        .insert({
+          title: title.trim(),
+          description: description.trim() || null,
+          genre,
+          release_year: Number(releaseYear) || null,
+          duration: duration.trim() || null,
+          rating: 0,
+          video_path: videoPath,
+          poster_path: posterPath,
+          created_by: user.id,
+
+          access_type: accessType,
+          is_paid: accessType === "paid",
+          price_cents: priceCents,
+          paddle_price_id:
+            accessType === "paid"
+              ? paddlePriceId.trim()
+              : null,
+
+          is_published: false,
+        });
+
+      if (filmError) {
+        throw filmError;
+      }
+
+      filmSaved = true;
 
       setTitle("");
       setDescription("");
       setGenre("Drama");
       setReleaseYear("");
       setDuration("");
+
       setAccessType("free");
-      setPriceCents(0);
+      setPriceUsd("");
+      setPaddlePriceId("");
+
       setVideoFile(null);
       setPosterFile(null);
-      event.target.reset();
-      showMessage("Film uploaded successfully.", "success");
+
+      event.currentTarget.reset();
+
+      showMessage(
+        "Film uploaded and saved as an unpublished draft.",
+        "success"
+      );
+
+      onUploaded?.();
     } catch (error) {
       console.error("Film upload failed:", error);
 
-      if (videoPath) {
-        await supabase.storage.from("films").remove([videoPath]);
-      }
+      if (!filmSaved) {
+        const paths = [videoPath, posterPath].filter(Boolean);
 
-      if (posterPath) {
-        await supabase.storage.from("films").remove([posterPath]);
+        if (paths.length > 0) {
+          const { error: cleanupError } = await supabase.storage
+            .from(BUCKET)
+            .remove(paths);
+
+          if (cleanupError) {
+            console.error(
+              "Could not remove incomplete upload:",
+              cleanupError
+            );
+          }
+        }
       }
 
       showMessage(
-        error instanceof Error ? error.message : "Upload failed.",
-        "error",
+        error instanceof Error
+          ? error.message
+          : "Upload failed.",
+        "error"
       );
     } finally {
       setLoading(false);
@@ -196,32 +414,42 @@ function AdminFilmUpload() {
       <div className="admin-upload-header">
         <div>
           <p className="eyebrow">ADMIN TOOLS</p>
-          <h2>Upload a new film</h2>
+          <h2>Upload a film</h2>
+
           <p>
-            Add the film information, choose access, then select the video
-            users will watch.
+            Upload films as unpublished drafts, then publish them
+            from Film Studio when they are ready.
           </p>
         </div>
+
         <div className="admin-badge">Admin only</div>
       </div>
 
-      <form className="admin-upload-form" onSubmit={handleUpload}>
+      <form
+        className="admin-upload-form"
+        onSubmit={handleUpload}
+      >
         <div className="admin-form-section">
           <div className="admin-section-title">
             <span>01</span>
+
             <div>
               <h3>Film information</h3>
-              <p>Tell users what this film is about and how they can watch it.</p>
+              <p>Enter the details viewers will see.</p>
             </div>
           </div>
 
           <div className="admin-form-grid">
             <label className="admin-field admin-field-wide">
-              <span>Film title <b>*</b></span>
+              <span>
+                Film title <b>*</b>
+              </span>
+
               <input
                 type="text"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
+                maxLength={200}
                 placeholder="Example: The Last Horizon"
                 disabled={loading}
                 required
@@ -230,36 +458,31 @@ function AdminFilmUpload() {
 
             <label className="admin-field">
               <span>Genre</span>
+
               <select
                 value={genre}
                 onChange={(event) => setGenre(event.target.value)}
                 disabled={loading}
               >
-                <option>Action</option>
-                <option>Adventure</option>
-                <option>Anime</option>
-                <option>Cartoon</option>
-                <option>Comedy</option>
-                <option>Crime</option>
-                <option>Documentary</option>
-                <option>Drama</option>
-                <option>Fantasy</option>
-                <option>Horror</option>
-                <option>Mystery</option>
-                <option>Romance</option>
-                <option>Sci-Fi</option>
-                <option>Thriller</option>
+                {GENRES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
               </select>
             </label>
 
             <label className="admin-field">
               <span>Release year</span>
+
               <input
                 type="number"
                 min="1888"
                 max="2100"
                 value={releaseYear}
-                onChange={(event) => setReleaseYear(event.target.value)}
+                onChange={(event) =>
+                  setReleaseYear(event.target.value)
+                }
                 placeholder="2026"
                 disabled={loading}
               />
@@ -267,55 +490,30 @@ function AdminFilmUpload() {
 
             <label className="admin-field">
               <span>Duration</span>
+
               <input
                 type="text"
                 value={duration}
-                onChange={(event) => setDuration(event.target.value)}
+                onChange={(event) =>
+                  setDuration(event.target.value)
+                }
+                maxLength={40}
                 placeholder="2h 10m"
                 disabled={loading}
               />
             </label>
 
-            <label className="admin-field">
-              <span>Film access <b>*</b></span>
-              <select
-                value={accessType}
-                onChange={(event) => setAccessType(event.target.value)}
-                disabled={loading}
-                required
-              >
-                <option value="free">Free to watch</option>
-                <option value="rent">Paid rental</option>
-                <option value="subscription">Subscriber only</option>
-              </select>
-            </label>
-
-            {accessType === "rent" && (
-              <label className="admin-field">
-                <span>Rental price (USD) <b>*</b></span>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={priceCents ? (priceCents / 100).toFixed(2) : ""}
-                  onChange={(event) => {
-                    const value = Number(event.target.value) || 0;
-                    setPriceCents(Math.round(value * 100));
-                  }}
-                  placeholder="3.99"
-                  disabled={loading}
-                  required
-                />
-              </label>
-            )}
-
             <label className="admin-field admin-field-wide">
               <span>Description</span>
+
               <textarea
                 value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="Write a description of the film..."
-                rows="5"
+                onChange={(event) =>
+                  setDescription(event.target.value)
+                }
+                maxLength={5000}
+                placeholder="Write a short description of the film..."
+                rows={5}
                 disabled={loading}
               />
             </label>
@@ -325,9 +523,96 @@ function AdminFilmUpload() {
         <div className="admin-form-section">
           <div className="admin-section-title">
             <span>02</span>
+
+            <div>
+              <h3>Access and payment</h3>
+
+              <p>
+                Choose whether this film is free or requires a
+                Paddle payment.
+              </p>
+            </div>
+          </div>
+
+          <div className="admin-form-grid">
+            <label className="admin-field">
+              <span>Viewer access</span>
+
+              <select
+                value={accessType}
+                onChange={handleAccessTypeChange}
+                disabled={loading}
+              >
+                <option value="free">Free for everyone</option>
+                <option value="paid">
+                  Paid — purchase required
+                </option>
+              </select>
+            </label>
+
+            {accessType === "paid" && (
+              <label className="admin-field">
+                <span>
+                  Price in USD <b>*</b>
+                </span>
+
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={priceUsd}
+                  onChange={(event) =>
+                    setPriceUsd(event.target.value)
+                  }
+                  placeholder="For example: 4.99"
+                  disabled={loading}
+                  required
+                />
+
+                <small>
+                  Enter dollars, not cents. For example, 4.99 is
+                  saved as 499 cents.
+                </small>
+              </label>
+            )}
+
+            {accessType === "paid" && (
+              <label className="admin-field admin-field-wide">
+                <span>
+                  Paddle price ID <b>*</b>
+                </span>
+
+                <input
+                  type="text"
+                  value={paddlePriceId}
+                  onChange={(event) =>
+                    setPaddlePriceId(event.target.value)
+                  }
+                  placeholder="pri_..."
+                  disabled={loading}
+                  required
+                />
+
+                <small>
+                  Create a matching Sandbox price in Paddle, then
+                  paste its `pri_...` ID here.
+                </small>
+              </label>
+            )}
+          </div>
+        </div>
+
+        <div className="admin-form-section">
+          <div className="admin-section-title">
+            <span>03</span>
+
             <div>
               <h3>Film files</h3>
-              <p>Choose the video and optional poster image.</p>
+
+              <p>
+                Large video uploads can resume after network
+                interruptions.
+              </p>
             </div>
           </div>
 
@@ -340,12 +625,21 @@ function AdminFilmUpload() {
                 disabled={loading}
                 required
               />
+
               <span className="admin-file-icon">▶</span>
               <strong>Choose video file</strong>
-              <small>MP4, WebM or MOV<br />Required</small>
+
+              <small>
+                MP4, WebM or MOV
+                <br />
+                Required
+              </small>
+
               {videoFile && (
                 <span className="selected-file">
-                  {videoFile.name}<br />{formatFileSize(videoFile.size)}
+                  {videoFile.name}
+                  <br />
+                  {formatFileSize(videoFile.size)}
                 </span>
               )}
             </label>
@@ -357,27 +651,56 @@ function AdminFilmUpload() {
                 onChange={handlePosterChange}
                 disabled={loading}
               />
+
               <span className="admin-file-icon">▧</span>
               <strong>Choose poster image</strong>
-              <small>PNG, JPG or WebP<br />Optional</small>
+
+              <small>
+                PNG, JPG or WebP
+                <br />
+                Optional, max 10 MB
+              </small>
+
               {posterFile && (
                 <span className="selected-file">
-                  {posterFile.name}<br />{formatFileSize(posterFile.size)}
+                  {posterFile.name}
+                  <br />
+                  {formatFileSize(posterFile.size)}
                 </span>
               )}
             </label>
           </div>
         </div>
 
+        {loading && (
+          <progress
+            aria-label="Video upload progress"
+            max="100"
+            value={progress}
+            style={{ width: "100%" }}
+          />
+        )}
+
         <div className="admin-upload-footer">
-          <p className="admin-required-note"><b>*</b> Required fields</p>
-          <button className="admin-upload-button" type="submit" disabled={loading}>
-            {loading ? "Uploading film..." : "Upload film"}
+          <p className="admin-required-note">
+            <b>*</b> Required fields
+          </p>
+
+          <button
+            className="admin-upload-button"
+            type="submit"
+            disabled={loading}
+          >
+            {loading ? "Uploading…" : "Upload draft"}
           </button>
         </div>
 
         {message && (
-          <p className={`admin-upload-message ${messageType}`} role="status" aria-live="polite">
+          <p
+            className={`admin-upload-message ${messageType}`}
+            role="status"
+            aria-live="polite"
+          >
             {message}
           </p>
         )}
@@ -385,5 +708,3 @@ function AdminFilmUpload() {
     </section>
   );
 }
-
-export default AdminFilmUpload;
