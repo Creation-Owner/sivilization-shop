@@ -123,20 +123,33 @@ export default function LibrarySection({ search = "" }) {
 
         if (!alive) return;
 
-        if (savedRes.error) console.error("Saved films error:", savedRes.error);
-        if (productsRes.error) console.error("Products error:", productsRes.error);
-        if (filmsRes.error) console.error("Film purchases error:", filmsRes.error);
+        if (savedRes.error) {
+          console.error("Saved films error:", savedRes.error);
+        }
+        if (productsRes.error) {
+          console.error("Products error:", productsRes.error);
+        }
+        if (filmsRes.error) {
+          console.error("Film purchases error:", filmsRes.error);
+        }
 
         setSavedFilms(
           (savedRes.data || [])
             .filter((row) => row.films)
-            .map((row) => ({ ...row.films, saved_at: row.created_at }))
+            .map((row) => ({
+              ...row.films,
+              saved_at: row.created_at,
+            }))
         );
 
         setPurchasedProducts(
           (productsRes.data || [])
             .filter((row) => row.product)
-            .map((row) => ({ ...row.product, purchase_id: row.id, purchased_at: row.created_at }))
+            .map((row) => ({
+              ...row.product,
+              purchase_id: row.id,
+              purchased_at: row.created_at,
+            }))
         );
 
         setPurchasedFilms(
@@ -150,9 +163,13 @@ export default function LibrarySection({ search = "" }) {
             }))
         );
       } catch (err) {
-        if (alive) setError(err?.message || "Could not load library.");
+        if (alive) {
+          setError(err?.message || "Could not load library.");
+        }
       } finally {
-        if (alive) setLoading(false);
+        if (alive) {
+          setLoading(false);
+        }
       }
     }
 
@@ -166,24 +183,39 @@ export default function LibrarySection({ search = "" }) {
   const filteredProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return purchasedProducts;
-    return purchasedProducts.filter((p) =>
-      [p.title, p.description, p.category].filter(Boolean).join(" ").toLowerCase().includes(term)
+
+    return purchasedProducts.filter((product) =>
+      [product.title, product.description, product.category]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
     );
   }, [purchasedProducts, search]);
 
   const filteredPurchasedFilms = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return purchasedFilms;
-    return purchasedFilms.filter((f) =>
-      [f.title, f.description, f.genre].filter(Boolean).join(" ").toLowerCase().includes(term)
+
+    return purchasedFilms.filter((film) =>
+      [film.title, film.description, film.genre]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
     );
   }, [purchasedFilms, search]);
 
   const filteredSavedFilms = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return savedFilms;
-    return savedFilms.filter((f) =>
-      [f.title, f.description, f.genre].filter(Boolean).join(" ").toLowerCase().includes(term)
+
+    return savedFilms.filter((film) =>
+      [film.title, film.description, film.genre]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
     );
   }, [savedFilms, search]);
 
@@ -192,7 +224,9 @@ export default function LibrarySection({ search = "" }) {
       <header className="section-heading">
         <p className="eyebrow">Your collection</p>
         <h1>My library</h1>
-        <p>Browse your purchased products, purchased films, and saved titles.</p>
+        <p>
+          Browse your purchased products, purchased films, and saved titles.
+        </p>
       </header>
 
       {notice && (
@@ -221,6 +255,7 @@ export default function LibrarySection({ search = "" }) {
         >
           Purchased Products ({purchasedProducts.length})
         </button>
+
         <button
           type="button"
           className={activeTab === "films" ? "selected" : ""}
@@ -228,6 +263,7 @@ export default function LibrarySection({ search = "" }) {
         >
           Purchased Films ({purchasedFilms.length})
         </button>
+
         <button
           type="button"
           className={activeTab === "saved" ? "selected" : ""}
@@ -246,24 +282,35 @@ export default function LibrarySection({ search = "" }) {
             </div>
           ) : (
             <div className="catalog-grid">
-              {filteredProducts.map((p) => {
-                const img = getProductImageUrl(p);
+              {filteredProducts.map((product) => {
+                const image = getProductImageUrl(product);
+
                 return (
-                  <article className="catalog-card" key={p.purchase_id || p.id}>
+                  <article
+                    className="catalog-card"
+                    key={product.purchase_id || product.id}
+                  >
                     <div className="catalog-art">
-                      {img ? (
-                        <img src={img} alt={p.title} loading="lazy" />
+                      {image ? (
+                        <img
+                          src={image}
+                          alt={product.title}
+                          loading="lazy"
+                        />
                       ) : (
                         <span aria-hidden="true">🛍️</span>
                       )}
                     </div>
+
                     <div className="catalog-card-body">
                       <div className="card-meta">
-                        <span>{p.category || "Product"}</span>
-                        <span>{formatPrice(p.price_cents)}</span>
+                        <span>{product.category || "Product"}</span>
+                        <span>{formatPrice(product.price_cents)}</span>
                       </div>
-                      <h2>{p.title}</h2>
-                      <p>{p.description || "An exclusive Sivilization item."}</p>
+                      <h2>{product.title}</h2>
+                      <p>
+                        {product.description || "An exclusive Sivilization item."}
+                      </p>
                       <span className="access-label">✓ Purchased</span>
                     </div>
                   </article>
@@ -283,28 +330,40 @@ export default function LibrarySection({ search = "" }) {
             </div>
           ) : (
             <div className="catalog-grid">
-              {filteredPurchasedFilms.map((f) => {
-                const poster = getPosterUrl(f);
+              {filteredPurchasedFilms.map((film) => {
+                const poster = getPosterUrl(film);
+
                 return (
-                  <article className="catalog-card" key={f.purchase_id || f.id}>
+                  <article
+                    className="catalog-card"
+                    key={film.purchase_id || film.id}
+                  >
                     <div className="catalog-art">
                       {poster ? (
-                        <img src={poster} alt={f.title} loading="lazy" />
+                        <img
+                          src={poster}
+                          alt={film.title}
+                          loading="lazy"
+                        />
                       ) : (
                         <span aria-hidden="true">🎬</span>
                       )}
                     </div>
+
                     <div className="catalog-card-body">
                       <div className="card-meta">
-                        <span>{f.genre || "Film"}</span>
-                        <span>{f.release_year || ""}</span>
+                        <span>{film.genre || "Film"}</span>
+                        <span>{film.release_year || ""}</span>
                       </div>
-                      <h2>{f.title}</h2>
-                      <p>{f.description || ""}</p>
-                      <span className="access-label">✓ Purchased Access</span>
+                      <h2>{film.title}</h2>
+                      <p>{film.description || ""}</p>
+                      <span className="access-label">
+                        ✓ Purchased Access
+                      </span>
                     </div>
                   </article>
-              )}
+                );
+              })}
             </div>
           )}
         </>
@@ -315,32 +374,41 @@ export default function LibrarySection({ search = "" }) {
           {filteredSavedFilms.length === 0 ? (
             <div className="empty-state">
               <h2>No saved films</h2>
-              <p>Save titles from the Media section to bookmark them here.</p>
+              <p>
+                Save titles from the Media section to bookmark them here.
+              </p>
             </div>
           ) : (
             <div className="catalog-grid">
-              {filteredSavedFilms.map((f) => {
-                const poster = getPosterUrl(f);
+              {filteredSavedFilms.map((film) => {
+                const poster = getPosterUrl(film);
+
                 return (
-                  <article className="catalog-card" key={f.id}>
+                  <article className="catalog-card" key={film.id}>
                     <div className="catalog-art">
                       {poster ? (
-                        <img src={poster} alt={f.title} loading="lazy" />
+                        <img
+                          src={poster}
+                          alt={film.title}
+                          loading="lazy"
+                        />
                       ) : (
                         <span aria-hidden="true">🎬</span>
                       )}
                     </div>
+
                     <div className="catalog-card-body">
                       <div className="card-meta">
-                        <span>{f.genre || "Film"}</span>
-                        <span>{f.release_year || ""}</span>
+                        <span>{film.genre || "Film"}</span>
+                        <span>{film.release_year || ""}</span>
                       </div>
-                      <h2>{f.title}</h2>
-                      <p>{f.description || ""}</p>
+                      <h2>{film.title}</h2>
+                      <p>{film.description || ""}</p>
                       <span className="access-label">Saved</span>
                     </div>
                   </article>
-              )}
+                );
+              })}
             </div>
           )}
         </>
