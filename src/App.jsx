@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
 import MediaSection from "./components/MediaSection";
@@ -149,6 +150,7 @@ function App() {
 
           {message && <p className="auth-message">{message}</p>}
         </section>
+        <Analytics />
       </main>
     );
   }
@@ -249,6 +251,7 @@ function App() {
           handleLogout={handleLogout}
         />
       )}
+      <Analytics />
     </main>
   );
 }
