@@ -1,43 +1,116 @@
 import { initializePaddle } from "@paddle/paddle-js";
 
-let paddleInstance = null;
+let paddleInstancePromise;
 
-export async function getPaddle() {
-  if (!paddleInstance) {
-    paddleInstance = await initializePaddle({
+async function getPaddle() {
+  if (!paddleInstancePromise) {
+    const token = import.meta.env.VITE_PADDLE_CLIENT_TOKEN?.trim();
+
+    if (!token) {
+      throw new Error("Missing VITE_PADDLE_CLIENT_TOKEN configuration.");
+    }
+
+    paddleInstancePromise = initializePaddle({
       environment: "sandbox",
-      token: import.meta.env.VITE_PADDLE_CLIENT_TOKEN,
-    });
+      token,
+    })
+      .then((paddle) => {
+        if (!paddle) {
+          throw new Error(
+            "Paddle could not initialize. Check the client token."
+          );
+        }
+
+        return paddle;
+      })
+      .catch((error) => {
+        // Allow a later attempt to retry initialization.
+        paddleInstancePromise = undefined;
+        throw error;
+      });
   }
 
-  return paddleInstance;
+  return paddleInstancePromise;
 }
 
-export async function buyItem({ priceId, customData }) {
+function getCheckoutSettings() {
+  return {
+    successUrl: `${window.location.origin}/?payment=success`,
+  };
+}
+
+function normalizeCheckoutItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("At least one item is required to start checkout.");
+  }
+
+  return items.map((item, index) => {
+    if (!item?.priceId) {
+      throw new Error(
+        `Checkout item ${index + 1} is missing a Paddle price ID.`
+      );
+    }
+
+    const quantity = Number(item.quantity) || 1;
+
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new Error(
+        `Checkout item ${index + 1} has an invalid quantity.`
+      );
+    }
+
+    return {
+      priceId: item.priceId,
+      quantity,
+    };
+  });
+}
+
+export async function buyItem({ priceId, quantity = 1, customData }) {
+  if (!priceId) {
+    throw new Error("A Paddle price ID is required to start checkout.");
+  }
+
   const paddle = await getPaddle();
 
   paddle.Checkout.open({
     items: [
       {
         priceId,
-        quantity: 1,
+        quantity,
       },
     ],
-    customData,
-    settings: {
-      successUrl: `${window.location.origin}/?payment=success`,
-    },
+    ...(customData ? { customData } : {}),
+    settings: getCheckoutSettings(),
   });
 }
 
 export async function openMultiItemCheckout({ items, customData }) {
+  const checkoutItems = normalizeCheckoutItems(items);
   const paddle = await getPaddle();
 
   paddle.Checkout.open({
-    items,
-    customData,
-    settings: {
-      successUrl: `${window.location.origin}/?payment=success`,
+    items: checkoutItems,
+    ...(customData ? { customData } : {}),
+    settings: getCheckoutSettings(),
+  });
+}
+export async function openPaddleCheckout({
+  priceId,
+  paymentType,
+  itemId,
+  title,
+  userId,
+  email,
+}) {
+  return buyItem({
+    priceId,
+    customData: {
+      user_id: userId,
+      product_id: itemId,
+      product_type: paymentType,
+      title,
+      email,
     },
   });
 }

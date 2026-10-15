@@ -46,7 +46,7 @@ Then open: **http://localhost:5173**
 5. Edit `.env.local` file:
    ```
    VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=your-anon-key-here
+   VITE_SUPABASE_ANON_KEY=sb_publishable_RKAFWn2klm4Sf7TVSywtSQ_GWKT0oiB
    ```
 
 ### Create Database Tables:

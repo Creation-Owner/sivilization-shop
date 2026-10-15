@@ -74,7 +74,9 @@ export default function CartSection({ onCartChange }) {
 
   const subtotal = cartItems.reduce(
     (total, item) =>
-      total + (Number(item.product?.price_cents) || 0) * (Number(item.quantity) || 0),
+      total +
+      (Number(item.product?.price_cents) || 0) *
+        (Number(item.quantity) || 0),
     0
   );
 
@@ -128,7 +130,9 @@ export default function CartSection({ onCartChange }) {
         current.filter((currentItem) => currentItem.id !== item.id)
       );
 
-      setMessage(`${item.product?.title || "Product"} was removed from your cart.`);
+      setMessage(
+        `${item.product?.title || "Product"} was removed from your cart.`
+      );
       onCartChange?.();
     }
 
@@ -146,6 +150,11 @@ export default function CartSection({ onCartChange }) {
 
     if (userError || !user) {
       setError("Please sign in to complete your checkout.");
+      return;
+    }
+
+    if (cartItems.length === 0) {
+      setError("Your cart is empty.");
       return;
     }
 
@@ -180,10 +189,6 @@ export default function CartSection({ onCartChange }) {
           payment_type: "cart",
         },
       });
-
-      setMessage(
-        "Paddle checkout opened. Complete your card details to finalize your order."
-      );
     } catch (checkoutErr) {
       console.error("Cart checkout error:", checkoutErr);
       setError(checkoutErr?.message || "Could not open checkout.");
@@ -239,7 +244,11 @@ export default function CartSection({ onCartChange }) {
                 <article className="cart-item" key={item.id}>
                   <div className="cart-item-image">
                     {imageUrl ? (
-                      <img src={imageUrl} alt={product.title} loading="lazy" />
+                      <img
+                        src={imageUrl}
+                        alt={product.title}
+                        loading="lazy"
+                      />
                     ) : (
                       <span aria-hidden="true">🛍️</span>
                     )}

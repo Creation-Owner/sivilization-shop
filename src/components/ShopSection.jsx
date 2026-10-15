@@ -40,14 +40,6 @@ export default function ShopSection({
   const [selectedCategory, setSelectedCategory] = useState("All");
 
   useEffect(() => {
-    try {
-      initializePaddle();
-    } catch (paddleError) {
-      console.error("Paddle could not initialize:", paddleError);
-    }
-  }, []);
-
-  useEffect(() => {
     let alive = true;
 
     async function loadShop() {
@@ -314,15 +306,18 @@ export default function ShopSection({
         throw new Error("Please log in before purchasing.");
       }
 
-      await openPaddleCheckout({
+      await buyItem({
         priceId: product.paddle_price_id,
-        paymentType: "product",
-        itemId: product.id,
-        title: product.title,
-        userId: user.id,
-        email: user.email,
+        customData: {
+          user_id: user.id,
+          product_id: product.id,
+          product_type: "product",
+          title: product.title,
+          email: user.email,
+        },
       });
     } catch (paymentError) {
+      console.error("Shop checkout error:", paymentError);
       setError(paymentError?.message || "Could not open checkout.");
     } finally {
       setActionProductId(null);

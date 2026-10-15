@@ -279,12 +279,11 @@ function FilmDetailsPage({
         priceId: film.paddle_price_id,
         customData: {
           user_id: user.id,
-          product_id: film.id,
-          product_type: "film",
+          film_id: film.id,
+          payment_type: "film",
+          access_type: accessType,
         },
       });
-
-      setMessage("Paddle checkout opened. Complete payment to unlock playback.");
     } catch (err) {
       console.error("Buy film failed:", err);
       setMessage(err?.message || "Could not open Paddle checkout.");
@@ -401,6 +400,7 @@ function FilmDetailsPage({
         <div className="film-paywall">
           <h2>Subscription required</h2>
           <p>Choose an active membership to watch this film.</p>
+
           <button
             className="media-watch-button"
             type="button"
@@ -416,6 +416,7 @@ function FilmDetailsPage({
       <div className="film-paywall">
         <h2>Purchase required</h2>
         <p>Purchase this film to unlock full playback.</p>
+
         <button
           className="media-watch-button"
           type="button"

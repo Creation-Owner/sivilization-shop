@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
 
+import PasswordRecoveryPage from "./components/PasswordRecoveryPage";
 import HomeSection from "./components/HomeSection";
 import MediaSection from "./components/MediaSection";
 import FilmDetailsPage from "./components/FilmDetailsPage";
@@ -606,6 +607,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [startupError, setStartupError] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -631,8 +633,18 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!alive) return;
+
       setSession(nextSession);
+
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryMode(true);
+      }
+
+      if (event === "SIGNED_OUT") {
+        setRecoveryMode(false);
+      }
     });
 
     return () => {
@@ -656,13 +668,12 @@ export default function App() {
     return (
       <main className="auth-page">
         <section className="auth-card">
-          <div className="brand-mark" aria-hidden="true">
-            !
-          </div>
+          <div className="brand-mark" aria-hidden="true">!</div>
 
           <p className="eyebrow">Supabase connection</p>
           <h1>Could not start your session</h1>
           <p className="auth-subtitle">{startupError}</p>
+
           <p className="setup-hint">
             Check the Supabase URL and publishable/anon key in `.env.local`,
             then restart Vite.
@@ -677,6 +688,21 @@ export default function App() {
           </button>
         </section>
       </main>
+    );
+  }
+
+  if (session && recoveryMode) {
+    return (
+      <PasswordRecoveryPage
+        onComplete={() => {
+          setRecoveryMode(false);
+          window.location.replace(window.location.origin);
+        }}
+        onCancel={async () => {
+          await supabase.auth.signOut();
+          setRecoveryMode(false);
+        }}
+      />
     );
   }
 
