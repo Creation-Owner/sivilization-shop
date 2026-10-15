@@ -138,6 +138,27 @@ async function uploadResumable(file, path, onProgress) {
   });
 }
 
+async function createFilmPrice(filmId) {
+  const { data, error } = await supabase.functions.invoke(
+    "create-film-price",
+    {
+      body: {
+        film_id: filmId,
+      },
+    }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  if (data?.error) {
+    throw new Error(data.error);
+  }
+
+  return data?.priceId || null;
+}
+
 export default function AdminFilmUpload({ onUploaded }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -147,7 +168,6 @@ export default function AdminFilmUpload({ onUploaded }) {
 
   const [accessType, setAccessType] = useState("free");
   const [priceUsd, setPriceUsd] = useState("");
-  const [paddlePriceId, setPaddlePriceId] = useState("");
 
   const [videoFile, setVideoFile] = useState(null);
   const [posterFile, setPosterFile] = useState(null);
@@ -222,7 +242,6 @@ export default function AdminFilmUpload({ onUploaded }) {
 
     if (nextAccessType === "free") {
       setPriceUsd("");
-      setPaddlePriceId("");
     }
   }
 
@@ -252,14 +271,6 @@ export default function AdminFilmUpload({ onUploaded }) {
       return;
     }
 
-    if (accessType === "paid" && !paddlePriceId.trim()) {
-      showMessage(
-        "Enter the Paddle price ID for this paid film.",
-        "error"
-      );
-      return;
-    }
-
     setLoading(true);
     setProgress(0);
     showMessage("Checking administrator access…");
@@ -267,6 +278,7 @@ export default function AdminFilmUpload({ onUploaded }) {
     let videoPath = null;
     let posterPath = null;
     let filmSaved = false;
+    let newFilmId = null;
 
     try {
       const {
@@ -327,7 +339,7 @@ export default function AdminFilmUpload({ onUploaded }) {
           ? Math.round(priceInDollars * 100)
           : 0;
 
-      const { error: filmError } = await supabase
+      const { data: insertedFilm, error: filmError } = await supabase
         .from("films")
         .insert({
           title: title.trim(),
@@ -343,19 +355,54 @@ export default function AdminFilmUpload({ onUploaded }) {
           access_type: accessType,
           is_paid: accessType === "paid",
           price_cents: priceCents,
-          paddle_price_id:
-            accessType === "paid"
-              ? paddlePriceId.trim()
-              : null,
+          paddle_price_id: null,
 
           is_published: false,
-        });
+        })
+        .select("id")
+        .single();
 
       if (filmError) {
         throw filmError;
       }
 
+      newFilmId = insertedFilm?.id || null;
       filmSaved = true;
+
+      if (accessType === "paid" && newFilmId) {
+        showMessage("Creating Paddle checkout price…");
+
+        try {
+          const priceId = await createFilmPrice(newFilmId);
+
+          if (priceId) {
+            showMessage(
+              "Film uploaded and Paddle checkout price created.",
+              "success"
+            );
+          } else {
+            showMessage(
+              "Film uploaded, but Paddle did not return a price ID.",
+              "error"
+            );
+          }
+        } catch (priceError) {
+          console.error(
+            "Paddle price creation failed:",
+            priceError
+          );
+
+          showMessage(
+            "Film uploaded, but Paddle price creation failed. You can retry it later.",
+            "error"
+          );
+        }
+      } else {
+        showMessage(
+          "Film uploaded and saved as an unpublished draft.",
+          "success"
+        );
+      }
 
       setTitle("");
       setDescription("");
@@ -365,17 +412,11 @@ export default function AdminFilmUpload({ onUploaded }) {
 
       setAccessType("free");
       setPriceUsd("");
-      setPaddlePriceId("");
 
       setVideoFile(null);
       setPosterFile(null);
 
       event.currentTarget.reset();
-
-      showMessage(
-        "Film uploaded and saved as an unpublished draft.",
-        "success"
-      );
 
       onUploaded?.();
     } catch (error) {
@@ -529,7 +570,8 @@ export default function AdminFilmUpload({ onUploaded }) {
 
               <p>
                 Choose whether this film is free or requires a
-                Paddle payment.
+                Paddle payment. A Paddle price is created
+                automatically for paid films.
               </p>
             </div>
           </div>
@@ -575,30 +617,6 @@ export default function AdminFilmUpload({ onUploaded }) {
                 </small>
               </label>
             )}
-
-            {accessType === "paid" && (
-              <label className="admin-field admin-field-wide">
-                <span>
-                  Paddle price ID <b>*</b>
-                </span>
-
-                <input
-                  type="text"
-                  value={paddlePriceId}
-                  onChange={(event) =>
-                    setPaddlePriceId(event.target.value)
-                  }
-                  placeholder="pri_..."
-                  disabled={loading}
-                  required
-                />
-
-                <small>
-                  Create a matching Sandbox price in Paddle, then
-                  paste its `pri_...` ID here.
-                </small>
-              </label>
-            )}
           </div>
         </div>
 
@@ -608,7 +626,6 @@ export default function AdminFilmUpload({ onUploaded }) {
 
             <div>
               <h3>Film files</h3>
-
               <p>
                 Large video uploads can resume after network
                 interruptions.
