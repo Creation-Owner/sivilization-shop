@@ -9,6 +9,30 @@ function formatCurrency(cents) {
   }).format((Number(cents) || 0) / 100);
 }
 
+async function loadCommentAuthorNames(userIds) {
+  const ids = [...new Set(userIds.filter(Boolean))];
+
+  if (ids.length === 0) {
+    return {};
+  }
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .in("id", ids);
+
+  if (error) {
+    throw error;
+  }
+
+  return Object.fromEntries(
+    (data || []).map((profile) => [
+      profile.id,
+      profile.full_name?.trim() || "Sivilization member",
+    ]),
+  );
+}
+
 function FilmDetailsPage({
   film,
   allFilms = [],
@@ -29,19 +53,21 @@ function FilmDetailsPage({
   const [postingComment, setPostingComment] = useState(false);
   const [message, setMessage] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
+  const [commentAuthorNames, setCommentAuthorNames] = useState({});
 
   const [hasAccess, setHasAccess] = useState(false);
   const [checkingAccess, setCheckingAccess] = useState(true);
-  const [hasSubscription, setHasSubscription] = useState(false);
-  const [hasPurchase, setHasPurchase] = useState(false);
   const [isPrivileged, setIsPrivileged] = useState(false);
   const [buyingFilm, setBuyingFilm] = useState(false);
 
   const accessType = String(film.access_type || "free").toLowerCase();
+
   const isSample =
     film.is_sample === true ||
     String(film.id || "").startsWith("sample-");
+
   const isSubscriptionFilm = accessType === "subscription";
+
   const isPaidFilm =
     accessType === "paid" ||
     accessType === "rent" ||
@@ -59,15 +85,34 @@ function FilmDetailsPage({
     [allFilms, film.id, film.genre],
   );
 
+  function getCommentAuthorName(comment) {
+    return (
+      commentAuthorNames[comment.user_id] || "Sivilization member"
+    );
+  }
+
   useEffect(() => {
     let cancelled = false;
 
     async function loadCurrentUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
 
-      if (!cancelled) setCurrentUserId(user?.id || "");
+        if (error) throw error;
+
+        if (!cancelled) {
+          setCurrentUserId(user?.id || "");
+        }
+      } catch (error) {
+        console.error("Could not load current user:", error);
+
+        if (!cancelled) {
+          setCurrentUserId("");
+        }
+      }
     }
 
     loadCurrentUser();
@@ -83,29 +128,40 @@ function FilmDetailsPage({
     async function loadComments() {
       setLoadingComments(true);
       setMessage("");
+      setComments([]);
+      setCommentAuthorNames({});
 
       if (isSample) {
-        setComments([]);
         setLoadingComments(false);
         return;
       }
 
-      const { data, error } = await supabase
-        .from("film_comments")
-        .select("id, film_id, user_id, comment_text, created_at")
-        .eq("film_id", film.id)
-        .order("created_at", { ascending: false });
+      try {
+        const { data, error } = await supabase
+          .from("film_comments")
+          .select("id, film_id, user_id, comment_text, created_at")
+          .eq("film_id", film.id)
+          .order("created_at", { ascending: false });
 
-      if (cancelled) return;
+        if (error) throw error;
 
-      if (error) {
-        setMessage(error.message || "Comments could not be loaded.");
-        setComments([]);
-      } else {
-        setComments(data || []);
+        if (!cancelled) {
+          setComments(data || []);
+        }
+      } catch (error) {
+        console.error("Could not load film comments:", error);
+
+        if (!cancelled) {
+          setMessage(
+            error?.message || "Comments could not be loaded.",
+          );
+          setComments([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingComments(false);
+        }
       }
-
-      setLoadingComments(false);
     }
 
     loadComments();
@@ -118,80 +174,145 @@ function FilmDetailsPage({
   useEffect(() => {
     let cancelled = false;
 
+    async function loadNames() {
+      try {
+        const names = await loadCommentAuthorNames(
+          comments.map((comment) => comment.user_id),
+        );
+
+        if (!cancelled) {
+          setCommentAuthorNames(names);
+        }
+      } catch (error) {
+        console.error(
+          "Could not load comment author names:",
+          error,
+        );
+
+        if (!cancelled) {
+          setCommentAuthorNames({});
+        }
+      }
+    }
+
+    loadNames();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [comments]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function checkAccess() {
       setCheckingAccess(true);
       setHasAccess(false);
-      setHasPurchase(false);
-      setHasSubscription(false);
       setIsPrivileged(false);
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
 
-      if (!user) {
-        if (!cancelled) setCheckingAccess(false);
-        return;
-      }
+        if (userError) throw userError;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("is_admin, is_owner")
-        .eq("id", user.id)
-        .maybeSingle();
+        if (!user) {
+          return;
+        }
 
-      const privileged =
-        profile?.is_admin === true || profile?.is_owner === true;
-
-      let purchaseValid = false;
-      let subscriptionValid = false;
-
-      if (!isSample) {
-        const { data: purchases } = await supabase
-          .from("purchases")
-          .select("id, purchase_type, expires_at")
-          .eq("user_id", user.id)
-          .eq("film_id", film.id)
-          .in("purchase_type", ["rent", "buy"])
-          .order("created_at", { ascending: false })
-          .limit(10);
-
-        purchaseValid = (purchases || []).some((purchase) => {
-          if (purchase.purchase_type === "buy") return true;
-          return (
-            purchase.purchase_type === "rent" &&
-            (!purchase.expires_at ||
-              new Date(purchase.expires_at) > new Date())
-          );
-        });
-
-        const { data: sub } = await supabase
-          .from("subscriptions")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("status", "active")
-          .or("ends_at.is.null,ends_at.gt.now()")
-          .limit(1)
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("is_admin, is_owner")
+          .eq("id", user.id)
           .maybeSingle();
 
-        subscriptionValid = Boolean(sub);
+        if (profileError) throw profileError;
+
+        const privileged =
+          profile?.is_admin === true ||
+          profile?.is_owner === true;
+
+        let purchaseValid = false;
+        let subscriptionValid = false;
+
+        if (!isSample) {
+          const { data: purchases, error: purchasesError } =
+            await supabase
+              .from("purchases")
+              .select("id, purchase_type, expires_at")
+              .eq("user_id", user.id)
+              .eq("film_id", film.id)
+              .in("purchase_type", ["rent", "buy"])
+              .order("created_at", { ascending: false })
+              .limit(10);
+
+          if (purchasesError) {
+            console.error(
+              "Could not check film purchases:",
+              purchasesError,
+            );
+          } else {
+            purchaseValid = (purchases || []).some((purchase) => {
+              if (purchase.purchase_type === "buy") {
+                return true;
+              }
+
+              return (
+                purchase.purchase_type === "rent" &&
+                (!purchase.expires_at ||
+                  new Date(purchase.expires_at) > new Date())
+              );
+            });
+          }
+
+          const { data: sub, error: subscriptionError } =
+            await supabase
+              .from("subscriptions")
+              .select("id")
+              .eq("user_id", user.id)
+              .eq("status", "active")
+              .or("ends_at.is.null,ends_at.gt.now()")
+              .limit(1)
+              .maybeSingle();
+
+          if (subscriptionError) {
+            console.error(
+              "Could not check membership:",
+              subscriptionError,
+            );
+          } else {
+            subscriptionValid = Boolean(sub);
+          }
+        }
+
+        if (cancelled) return;
+
+        setIsPrivileged(privileged);
+
+        const allowed =
+          !isPaidFilm ||
+          privileged ||
+          (isSubscriptionFilm && subscriptionValid) ||
+          ((accessType === "paid" || accessType === "rent") &&
+            purchaseValid);
+
+        setHasAccess(allowed);
+      } catch (error) {
+        console.error("Could not check watch access:", error);
+
+        if (!cancelled) {
+          setHasAccess(false);
+          setMessage(
+            error?.message || "Could not check your watch access.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingAccess(false);
+        }
       }
-
-      if (cancelled) return;
-
-      setIsPrivileged(privileged);
-      setHasPurchase(purchaseValid);
-      setHasSubscription(subscriptionValid);
-
-      const allowed =
-        !isPaidFilm ||
-        privileged ||
-        (isSubscriptionFilm && subscriptionValid) ||
-        ((accessType === "paid" || accessType === "rent") &&
-          purchaseValid);
-
-      setHasAccess(allowed);
-      setCheckingAccess(false);
     }
 
     checkAccess();
@@ -199,7 +320,13 @@ function FilmDetailsPage({
     return () => {
       cancelled = true;
     };
-  }, [film.id, isSample, accessType, isPaidFilm, isSubscriptionFilm]);
+  }, [
+    film.id,
+    isSample,
+    accessType,
+    isPaidFilm,
+    isSubscriptionFilm,
+  ]);
 
   async function requestVideoUrl() {
     setVideoError("");
@@ -216,11 +343,14 @@ function FilmDetailsPage({
       } else {
         setVideoError("This sample film has no video URL.");
       }
+
       return;
     }
 
     if (isPaidFilm && !hasAccess) {
-      setVideoError("You do not currently have access to this film.");
+      setVideoError(
+        "You do not currently have access to this film.",
+      );
       return;
     }
 
@@ -242,39 +372,47 @@ function FilmDetailsPage({
       if (error) throw error;
 
       if (!data?.url) {
-        throw new Error(data?.error || "The function returned no video URL.");
+        throw new Error(
+          data?.error || "The function returned no video URL.",
+        );
       }
 
       setVideoUrl(data.url);
     } catch (error) {
       console.error("Playback request failed:", error);
-      setVideoError(error.message || "Could not authorize playback.");
+
+      setVideoError(
+        error?.message || "Could not authorize playback.",
+      );
     } finally {
       setLoadingVideo(false);
     }
   }
 
   async function handleBuyFilm() {
+    if (buyingFilm) return;
+
     setMessage("");
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      setMessage("Please sign in before purchasing a film.");
-      return;
-    }
-
-    if (!film.paddle_price_id) {
-      setMessage("This film does not have a Paddle price configured yet.");
-      return;
-    }
-
     setBuyingFilm(true);
 
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        throw new Error(
+          "Please sign in before purchasing a film.",
+        );
+      }
+
+      if (!film.paddle_price_id) {
+        throw new Error(
+          "This film does not have a Paddle price configured yet.",
+        );
+      }
+
       await buyItem({
         priceId: film.paddle_price_id,
         customData: {
@@ -284,9 +422,12 @@ function FilmDetailsPage({
           access_type: accessType,
         },
       });
-    } catch (err) {
-      console.error("Buy film failed:", err);
-      setMessage(err?.message || "Could not open Paddle checkout.");
+    } catch (error) {
+      console.error("Buy film failed:", error);
+
+      setMessage(
+        error?.message || "Could not open Paddle checkout.",
+      );
     } finally {
       setBuyingFilm(false);
     }
@@ -297,33 +438,43 @@ function FilmDetailsPage({
 
     if (isSample || !film.id || !video?.duration) return;
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    if (!user) return;
+      if (userError) throw userError;
+      if (!user) return;
 
-    const durationSeconds = Math.floor(video.duration);
-    const secondsWatched = Math.floor(video.currentTime);
+      const durationSeconds = Math.floor(video.duration);
+      const secondsWatched = Math.floor(video.currentTime);
 
-    const { error } = await supabase.from("watch_progress").upsert(
-      {
-        user_id: user.id,
-        film_id: film.id,
-        seconds_watched: secondsWatched,
-        duration_seconds: durationSeconds,
-        completed:
-          durationSeconds > 0 &&
-          secondsWatched >= durationSeconds * 0.95,
-      },
-      { onConflict: "user_id,film_id" },
-    );
+      const { error } = await supabase
+        .from("watch_progress")
+        .upsert(
+          {
+            user_id: user.id,
+            film_id: film.id,
+            seconds_watched: secondsWatched,
+            duration_seconds: durationSeconds,
+            completed:
+              durationSeconds > 0 &&
+              secondsWatched >= durationSeconds * 0.95,
+          },
+          { onConflict: "user_id,film_id" },
+        );
 
-    if (error) console.error("Could not save watch progress:", error);
+      if (error) throw error;
+    } catch (error) {
+      console.error("Could not save watch progress:", error);
+    }
   }
 
   async function submitComment(event) {
     event.preventDefault();
+
+    if (postingComment) return;
 
     const text = commentText.trim();
 
@@ -345,24 +496,30 @@ function FilmDetailsPage({
     setPostingComment(true);
     setMessage("");
 
-    const { data, error } = await supabase
-      .from("film_comments")
-      .insert({
-        film_id: film.id,
-        user_id: currentUserId,
-        comment_text: text,
-      })
-      .select("id, film_id, user_id, comment_text, created_at")
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from("film_comments")
+        .insert({
+          film_id: film.id,
+          user_id: currentUserId,
+          comment_text: text,
+        })
+        .select("id, film_id, user_id, comment_text, created_at")
+        .single();
 
-    if (error) {
-      setMessage(error.message || "Your comment could not be posted.");
-    } else {
+      if (error) throw error;
+
       setComments((current) => [data, ...current]);
       setCommentText("");
-    }
+    } catch (error) {
+      console.error("Could not post comment:", error);
 
-    setPostingComment(false);
+      setMessage(
+        error?.message || "Your comment could not be posted.",
+      );
+    } finally {
+      setPostingComment(false);
+    }
   }
 
   async function deleteComment(commentId) {
@@ -370,103 +527,108 @@ function FilmDetailsPage({
       return;
     }
 
-    const { error } = await supabase
-      .from("film_comments")
-      .delete()
-      .eq("id", commentId)
-      .eq("user_id", currentUserId);
+    try {
+      const { error } = await supabase
+        .from("film_comments")
+        .delete()
+        .eq("id", commentId)
+        .eq("user_id", currentUserId);
 
-    if (error) {
-      setMessage(error.message || "Comment could not be deleted.");
-      return;
+      if (error) throw error;
+
+      setComments((current) =>
+        current.filter((comment) => comment.id !== commentId),
+      );
+    } catch (error) {
+      setMessage(
+        error?.message || "Comment could not be deleted.",
+      );
     }
-
-    setComments((current) =>
-      current.filter((comment) => comment.id !== commentId),
-    );
   }
 
   function renderAccessMessage() {
-  if (checkingAccess) {
-    return (
-      <p className="media-status">
-        Checking watch access…
-      </p>
-    );
-  }
+    if (checkingAccess) {
+      return (
+        <p className="media-status">
+          Checking watch access…
+        </p>
+      );
+    }
 
-  if (hasAccess) {
-    return null;
-  }
+    if (hasAccess) {
+      return null;
+    }
 
-  if (isSubscriptionFilm) {
+    if (isSubscriptionFilm) {
+      return (
+        <div className="film-paywall">
+          <h2>Membership required</h2>
+
+          <p>
+            This film is included with a subscription. Choose a
+            membership plan to watch it.
+          </p>
+
+          <button
+            className="media-watch-button"
+            type="button"
+            onClick={onNavigateToSubscriptions}
+          >
+            View subscription plans
+          </button>
+        </div>
+      );
+    }
+
+    const isRental = accessType === "rent";
+    const hasCheckoutPrice = Boolean(film.paddle_price_id);
+
     return (
       <div className="film-paywall">
-        <h2>Membership required</h2>
+        <h2>
+          {isRental ? "Rental required" : "Purchase required"}
+        </h2>
 
         <p>
-          This film is included with a subscription.
-          Choose a membership plan to watch it.
+          {isRental
+            ? "Rent this film to unlock playback."
+            : "Buy this film to unlock playback."}
         </p>
+
+        <p>Price: {formatCurrency(film.price_cents)}</p>
 
         <button
           className="media-watch-button"
           type="button"
-          onClick={onNavigateToSubscriptions}
+          onClick={handleBuyFilm}
+          disabled={buyingFilm || !hasCheckoutPrice}
         >
-          View subscription plans
+          {buyingFilm
+            ? "Opening checkout…"
+            : hasCheckoutPrice
+              ? `${
+                  isRental ? "Rent film" : "Buy film"
+                } — ${formatCurrency(film.price_cents)}`
+              : "Payment temporarily unavailable"}
         </button>
+
+        {!hasCheckoutPrice && (
+          <p className="media-access-message" role="status">
+            Checkout is not ready for this film yet. Please try
+            again later.
+          </p>
+        )}
       </div>
     );
   }
 
-  const isRental = accessType === "rent";
-  const hasCheckoutPrice = Boolean(film.paddle_price_id);
-
-  return (
-    <div className="film-paywall">
-      <h2>
-        {isRental ? "Rental required" : "Purchase required"}
-      </h2>
-
-      <p>
-        {isRental
-          ? "Rent this film to unlock playback."
-          : "Buy this film to unlock playback."}
-      </p>
-
-      <p>
-        Price: {formatCurrency(film.price_cents)}
-      </p>
-
-      <button
-        className="media-watch-button"
-        type="button"
-        onClick={handleBuyFilm}
-        disabled={buyingFilm || !hasCheckoutPrice}
-      >
-        {buyingFilm
-          ? "Opening checkout…"
-          : hasCheckoutPrice
-            ? `${
-                isRental ? "Rent film" : "Buy film"
-              } — ${formatCurrency(film.price_cents)}`
-            : "Payment temporarily unavailable"}
-      </button>
-
-      {!hasCheckoutPrice && (
-        <p className="media-access-message" role="status">
-          Checkout is not ready for this film yet.
-          Please try again later.
-        </p>
-      )}
-    </div>
-  );
-}
-
   return (
     <section className="film-details-page section-page">
-      <button className="back-button" type="button" onClick={onBack}>
+      <button
+        className="back-button"
+        type="button"
+        onClick={onBack}
+      >
         ← Back to films
       </button>
 
@@ -512,7 +674,10 @@ function FilmDetailsPage({
                 </h2>
 
                 {videoError && (
-                  <p className="media-access-message" role="alert">
+                  <p
+                    className="media-access-message"
+                    role="alert"
+                  >
                     {videoError}
                   </p>
                 )}
@@ -554,7 +719,8 @@ function FilmDetailsPage({
             </div>
 
             <p className="film-description">
-              {film.description || "No description has been added yet."}
+              {film.description ||
+                "No description has been added yet."}
             </p>
 
             {message && (
@@ -628,7 +794,8 @@ function FilmDetailsPage({
                           backgroundSize: "cover",
                         }
                       : {
-                          "--related-film-color": item.color || "#172554",
+                          "--related-film-color":
+                            item.color || "#172554",
                         }
                   }
                 >
@@ -668,11 +835,16 @@ function FilmDetailsPage({
         ) : (
           <>
             {currentUserId ? (
-              <form className="comment-form" onSubmit={submitComment}>
+              <form
+                className="comment-form"
+                onSubmit={submitComment}
+              >
                 <textarea
                   value={commentText}
                   onChange={(event) =>
-                    setCommentText(event.target.value.slice(0, 1000))
+                    setCommentText(
+                      event.target.value.slice(0, 1000),
+                    )
                   }
                   maxLength={1000}
                   rows={4}
@@ -686,20 +858,27 @@ function FilmDetailsPage({
                   <button
                     className="media-watch-button"
                     type="submit"
-                    disabled={postingComment || !commentText.trim()}
+                    disabled={
+                      postingComment || !commentText.trim()
+                    }
                   >
-                    {postingComment ? "Posting…" : "Post comment"}
+                    {postingComment
+                      ? "Posting…"
+                      : "Post comment"}
                   </button>
                 </div>
               </form>
             ) : (
               <p className="media-status">
-                Sign in to comment. Existing comments are visible below.
+                Sign in to comment. Existing comments are visible
+                below.
               </p>
             )}
 
             {loadingComments ? (
-              <p className="media-status">Loading comments…</p>
+              <p className="media-status">
+                Loading comments…
+              </p>
             ) : comments.length === 0 ? (
               <div className="comments-empty">
                 <h3>Be the first to comment</h3>
@@ -707,39 +886,59 @@ function FilmDetailsPage({
               </div>
             ) : (
               <div className="comments-list">
-                {comments.map((comment) => (
-                  <article className="comment-card" key={comment.id}>
-                    <div className="comment-avatar" aria-hidden="true">
-                      {comment.user_id === currentUserId ? "Y" : "S"}
-                    </div>
+                {comments.map((comment) => {
+                  const authorName =
+                    getCommentAuthorName(comment);
 
-                    <div className="comment-content">
-                      <div className="comment-header">
-                        <strong>
-                          {comment.user_id === currentUserId
-                            ? "You"
-                            : "Sivilization member"}
-                        </strong>
+                  const isOwnComment =
+                    comment.user_id === currentUserId;
 
-                        <time dateTime={comment.created_at}>
-                          {new Date(comment.created_at).toLocaleString()}
-                        </time>
+                  const avatarLetter =
+                    authorName.charAt(0).toUpperCase() || "S";
+
+                  return (
+                    <article
+                      className="comment-card"
+                      key={comment.id}
+                    >
+                      <div
+                        className="comment-avatar"
+                        aria-hidden="true"
+                      >
+                        {avatarLetter}
                       </div>
 
-                      <p>{comment.comment_text}</p>
-                    </div>
+                      <div className="comment-content">
+                        <div className="comment-header">
+                          <strong>
+                            {authorName}
+                            {isOwnComment ? " (You)" : ""}
+                          </strong>
 
-                    {comment.user_id === currentUserId && (
-                      <button
-                        className="comment-delete-button"
-                        type="button"
-                        onClick={() => deleteComment(comment.id)}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </article>
-                ))}
+                          <time dateTime={comment.created_at}>
+                            {new Date(
+                              comment.created_at,
+                            ).toLocaleString()}
+                          </time>
+                        </div>
+
+                        <p>{comment.comment_text}</p>
+                      </div>
+
+                      {isOwnComment && (
+                        <button
+                          className="comment-delete-button"
+                          type="button"
+                          onClick={() =>
+                            deleteComment(comment.id)
+                          }
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </>
