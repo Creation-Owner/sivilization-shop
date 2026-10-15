@@ -300,10 +300,7 @@ function AppShell({ user }) {
   function navigate(section) {
     setActiveSection(section);
     setProfileOpen(false);
-
-    if (section !== "Media") {
-      setSelectedFilm(null);
-    }
+    setSelectedFilm(null);
 
     if (!["Media", "Games", "Shop", "Library"].includes(section)) {
       setSearch("");
@@ -332,8 +329,23 @@ function AppShell({ user }) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function refreshCartCount() {
-    setCartCount((current) => current + 1);
+  async function refreshCartCount() {
+    const { data, error } = await supabase
+      .from("cart_items")
+      .select("quantity")
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Could not refresh cart count:", error);
+      return;
+    }
+
+    setCartCount(
+      (data || []).reduce(
+        (total, item) => total + (Number(item.quantity) || 0),
+        0,
+      ),
+    );
   }
 
   return (
