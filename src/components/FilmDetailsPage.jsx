@@ -387,51 +387,82 @@ function FilmDetailsPage({
   }
 
   function renderAccessMessage() {
-    if (checkingAccess) {
-      return <p className="media-status">Checking watch access…</p>;
-    }
+  if (checkingAccess) {
+    return (
+      <p className="media-status">
+        Checking watch access…
+      </p>
+    );
+  }
 
-    if (hasAccess) {
-      return null;
-    }
+  if (hasAccess) {
+    return null;
+  }
 
-    if (isSubscriptionFilm) {
-      return (
-        <div className="film-paywall">
-          <h2>Subscription required</h2>
-          <p>Choose an active membership to watch this film.</p>
-
-          <button
-            className="media-watch-button"
-            type="button"
-            onClick={onNavigateToSubscriptions}
-          >
-            View subscription plans
-          </button>
-        </div>
-      );
-    }
-
+  if (isSubscriptionFilm) {
     return (
       <div className="film-paywall">
-        <h2>Purchase required</h2>
-        <p>Purchase this film to unlock full playback.</p>
+        <h2>Membership required</h2>
+
+        <p>
+          This film is included with a subscription.
+          Choose a membership plan to watch it.
+        </p>
 
         <button
           className="media-watch-button"
           type="button"
-          onClick={handleBuyFilm}
-          disabled={buyingFilm || !film.paddle_price_id}
+          onClick={onNavigateToSubscriptions}
         >
-          {buyingFilm
-            ? "Opening checkout…"
-            : film.paddle_price_id
-              ? `Buy film (${formatCurrency(film.price_cents)})`
-              : "Payment not configured"}
+          View subscription plans
         </button>
       </div>
     );
   }
+
+  const isRental = accessType === "rent";
+  const hasCheckoutPrice = Boolean(film.paddle_price_id);
+
+  return (
+    <div className="film-paywall">
+      <h2>
+        {isRental ? "Rental required" : "Purchase required"}
+      </h2>
+
+      <p>
+        {isRental
+          ? "Rent this film to unlock playback."
+          : "Buy this film to unlock playback."}
+      </p>
+
+      <p>
+        Price: {formatCurrency(film.price_cents)}
+      </p>
+
+      <button
+        className="media-watch-button"
+        type="button"
+        onClick={handleBuyFilm}
+        disabled={buyingFilm || !hasCheckoutPrice}
+      >
+        {buyingFilm
+          ? "Opening checkout…"
+          : hasCheckoutPrice
+            ? `${
+                isRental ? "Rent film" : "Buy film"
+              } — ${formatCurrency(film.price_cents)}`
+            : "Payment temporarily unavailable"}
+      </button>
+
+      {!hasCheckoutPrice && (
+        <p className="media-access-message" role="status">
+          Checkout is not ready for this film yet.
+          Please try again later.
+        </p>
+      )}
+    </div>
+  );
+}
 
   return (
     <section className="film-details-page section-page">
@@ -542,10 +573,13 @@ function FilmDetailsPage({
           ) : hasAccess ? (
             <>
               <h2>Available to watch</h2>
+
               <p>
                 {accessType === "free"
-                  ? "This film is free."
-                  : "Your account has access to this film."}
+                  ? "This film is free to watch."
+                  : isPrivileged
+                    ? "You have owner or administrator access."
+                    : "Your account has access to this film."}
               </p>
 
               {!videoUrl && (
@@ -560,41 +594,7 @@ function FilmDetailsPage({
               )}
             </>
           ) : (
-            <>
-              <h2>
-                {isSubscriptionFilm
-                  ? "Membership required"
-                  : "Purchase required"}
-              </h2>
-              <p>
-                {isSubscriptionFilm
-                  ? "Subscribe to unlock this film."
-                  : "Purchase this film to unlock playback."}
-              </p>
-
-              {isSubscriptionFilm ? (
-                <button
-                  className="media-watch-button"
-                  type="button"
-                  onClick={onNavigateToSubscriptions}
-                >
-                  View subscription plans
-                </button>
-              ) : (
-                <button
-                  className="media-watch-button"
-                  type="button"
-                  onClick={handleBuyFilm}
-                  disabled={buyingFilm || !film.paddle_price_id}
-                >
-                  {buyingFilm
-                    ? "Opening checkout…"
-                    : film.paddle_price_id
-                      ? `Buy for ${formatCurrency(film.price_cents)}`
-                      : "Price not configured"}
-                </button>
-              )}
-            </>
+            renderAccessMessage()
           )}
         </aside>
       </div>

@@ -70,6 +70,27 @@ function getErrorMessage(error) {
   return error?.message || "An unexpected error occurred.";
 }
 
+async function createFilmPrice(filmId) {
+  const { data, error } = await supabase.functions.invoke(
+    "create-film-price",
+    {
+      body: {
+        film_id: filmId,
+      },
+    }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  if (data?.error) {
+    throw new Error(data.error);
+  }
+
+  return data?.priceId || null;
+}
+
 export default function FilmStudioPage({ onBack }) {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [hasStudioAccess, setHasStudioAccess] = useState(false);
@@ -174,7 +195,10 @@ export default function FilmStudioPage({ onBack }) {
       setFilms(data || []);
     } catch (error) {
       console.error("Could not load Film Studio:", error);
-      showMessage(`Could not load Film Studio: ${getErrorMessage(error)}`, "error");
+      showMessage(
+        `Could not load Film Studio: ${getErrorMessage(error)}`,
+        "error"
+      );
     } finally {
       setCheckingAccess(false);
       setLoadingFilms(false);
@@ -233,7 +257,7 @@ export default function FilmStudioPage({ onBack }) {
       duration: film.duration || "",
       accessType: film.access_type || "free",
       price:
-        film.access_type === "rent"
+        film.access_type === "rent" || film.access_type === "paid"
           ? ((Number(film.price_cents) || 0) / 100).toFixed(2)
           : "",
       isPublished: film.is_published !== false,
@@ -267,11 +291,14 @@ export default function FilmStudioPage({ onBack }) {
       return;
     }
 
+    const isPaidFilmType =
+      form.accessType === "paid" || form.accessType === "rent";
+
     if (
-      form.accessType === "rent" &&
+      isPaidFilmType &&
       (!Number.isFinite(Number(form.price)) || Number(form.price) <= 0)
     ) {
-      showMessage("Enter a valid rental price.", "error");
+      showMessage("Enter a valid price greater than $0.00.", "error");
       return;
     }
 
@@ -316,7 +343,7 @@ export default function FilmStudioPage({ onBack }) {
         await uploadStorageFile(
           uploadedVideoBucket,
           uploadedVideoPath,
-          videoFile,
+          videoFile
         );
 
         videoPath = uploadedVideoPath;
@@ -330,7 +357,7 @@ export default function FilmStudioPage({ onBack }) {
         await uploadStorageFile(
           BUCKETS.posters,
           uploadedPosterPath,
-          posterFile,
+          posterFile
         );
 
         posterPath = uploadedPosterPath;
@@ -343,10 +370,10 @@ export default function FilmStudioPage({ onBack }) {
         release_year: Number(form.releaseYear) || null,
         duration: form.duration.trim() || null,
         access_type: form.accessType,
-        price_cents:
-          form.accessType === "rent"
-            ? Math.round(Number(form.price) * 100)
-            : 0,
+        is_paid: isPaidFilmType,
+        price_cents: isPaidFilmType
+          ? Math.round(Number(form.price) * 100)
+          : 0,
         video_path: videoPath,
         poster_path: posterPath,
         created_by: user.id,
@@ -354,8 +381,6 @@ export default function FilmStudioPage({ onBack }) {
         updated_at: new Date().toISOString(),
       };
 
-      // Store the bucket alongside the file path if the column exists.
-      // If films.video_bucket is not in the schema, the code retries without it.
       let savedFilm;
       let saveError;
 
@@ -421,20 +446,50 @@ export default function FilmStudioPage({ onBack }) {
         await removeStorageFile(BUCKETS.posters, form.posterPath);
       }
 
+      let priceMessage = "";
+
+      if (
+        isPaidFilmType &&
+        savedFilm?.id &&
+        !savedFilm.paddle_price_id
+      ) {
+        showMessage("Creating Paddle checkout price…");
+
+        try {
+          const priceId = await createFilmPrice(savedFilm.id);
+
+          if (priceId) {
+            priceMessage = " Paddle checkout price was created automatically.";
+          } else {
+            priceMessage =
+              " However, Paddle did not return a checkout price ID.";
+          }
+        } catch (priceError) {
+          console.error("Could not create Paddle price:", priceError);
+          priceMessage =
+            " However, Paddle price creation failed. You can retry later.";
+        }
+      }
+
       setFilms((current) =>
         form.id
           ? current.map((film) =>
-              film.id === savedFilm.id ? savedFilm : film,
+              film.id === savedFilm.id ? savedFilm : film
             )
-          : [savedFilm, ...current],
+          : [savedFilm, ...current]
       );
 
-      showMessage(`${savedFilm.title} was saved successfully.`, "success");
+      showMessage(
+        `${savedFilm.title} was saved successfully.${priceMessage}`,
+        priceMessage.includes("failed") || priceMessage.includes("did not")
+          ? "error"
+          : "success"
+      );
+
       resetForm();
     } catch (error) {
       console.error("Could not save film:", error);
 
-      // Keep successful uploads if the database insert/update already completed.
       if (!databaseSaveCompleted) {
         if (uploadedVideoBucket && uploadedVideoPath) {
           await removeStorageFile(uploadedVideoBucket, uploadedVideoPath);
@@ -444,7 +499,10 @@ export default function FilmStudioPage({ onBack }) {
         }
       }
 
-      showMessage(`Could not save film: ${getErrorMessage(error)}`, "error");
+      showMessage(
+        `Could not save film: ${getErrorMessage(error)}`,
+        "error"
+      );
     } finally {
       setSaving(false);
     }
@@ -467,26 +525,26 @@ export default function FilmStudioPage({ onBack }) {
       if (error) throw error;
 
       setFilms((current) =>
-        current.map((item) => (item.id === data.id ? data : item)),
+        current.map((item) => (item.id === data.id ? data : item))
       );
 
       showMessage(
         data.is_published
           ? `${data.title} is now published.`
           : `${data.title} is now unpublished.`,
-        "success",
+        "success"
       );
     } catch (error) {
       showMessage(
         `Could not update film publication status: ${getErrorMessage(error)}`,
-        "error",
+        "error"
       );
     }
   }
 
   async function deleteFilm(film) {
     const confirmed = window.confirm(
-      `Delete "${film.title}"? This permanently removes the film record and its files.`,
+      `Delete "${film.title}"? This permanently removes the film record and its files.`
     );
 
     if (!confirmed) return;
@@ -512,14 +570,17 @@ export default function FilmStudioPage({ onBack }) {
       await removeStorageFile(BUCKETS.posters, film.poster_path);
 
       setFilms((current) =>
-        current.filter((item) => item.id !== film.id),
+        current.filter((item) => item.id !== film.id)
       );
 
       if (form.id === film.id) resetForm();
 
       showMessage(`${film.title} was deleted.`, "success");
     } catch (error) {
-      showMessage(`Could not delete film: ${getErrorMessage(error)}`, "error");
+      showMessage(
+        `Could not delete film: ${getErrorMessage(error)}`,
+        "error"
+      );
     } finally {
       setDeletingId(null);
     }
@@ -567,12 +628,16 @@ export default function FilmStudioPage({ onBack }) {
       <section className="admin-upload-panel film-management-panel">
         <div className="admin-upload-header">
           <div>
-            <p className="eyebrow">{form.id ? "EDIT FILM" : "ADD NEW FILM"}</p>
-            <h2>{form.id ? `Editing: ${form.title}` : "Film information"}</h2>
+            <p className="eyebrow">
+              {form.id ? "EDIT FILM" : "ADD NEW FILM"}
+            </p>
+            <h2>
+              {form.id ? `Editing: ${form.title}` : "Film information"}
+            </h2>
             <p>
               Free videos upload to the public `films-free` bucket.
-              Rental/subscription videos upload to the private `films-paid`
-              bucket. Posters go to `film-posters`.
+              Paid, rental, and subscription videos upload to the private
+              `films-paid` bucket. Posters go to `film-posters`.
             </p>
           </div>
 
@@ -595,11 +660,15 @@ export default function FilmStudioPage({ onBack }) {
 
             <div className="admin-form-grid">
               <label className="admin-field admin-field-wide">
-                <span>Film title <b>*</b></span>
+                <span>
+                  Film title <b>*</b>
+                </span>
                 <input
                   type="text"
                   value={form.title}
-                  onChange={(event) => updateForm("title", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("title", event.target.value)
+                  }
                   placeholder="Example: The Last Horizon"
                   disabled={saving}
                   required
@@ -610,7 +679,9 @@ export default function FilmStudioPage({ onBack }) {
                 <span>Genre</span>
                 <select
                   value={form.genre}
-                  onChange={(event) => updateForm("genre", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("genre", event.target.value)
+                  }
                   disabled={saving}
                 >
                   <option>Action</option>
@@ -647,7 +718,9 @@ export default function FilmStudioPage({ onBack }) {
                 <input
                   type="text"
                   value={form.duration}
-                  onChange={(event) => updateForm("duration", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("duration", event.target.value)
+                  }
                   placeholder="2h 10m"
                   disabled={saving}
                 />
@@ -663,24 +736,36 @@ export default function FilmStudioPage({ onBack }) {
                   disabled={saving}
                 >
                   <option value="free">Free</option>
+                  <option value="paid">Paid — buy forever</option>
                   <option value="rent">Rental</option>
                   <option value="subscription">Subscription only</option>
                 </select>
               </label>
 
-              {form.accessType === "rent" && (
+              {(form.accessType === "paid" ||
+                form.accessType === "rent") && (
                 <label className="admin-field">
-                  <span>Rental price in USD <b>*</b></span>
+                  <span>
+                    {form.accessType === "rent"
+                      ? "Rental price in USD"
+                      : "Purchase price in USD"}{" "}
+                    <b>*</b>
+                  </span>
                   <input
                     type="number"
                     min="0.01"
                     step="0.01"
                     value={form.price}
-                    onChange={(event) => updateForm("price", event.target.value)}
+                    onChange={(event) =>
+                      updateForm("price", event.target.value)
+                    }
                     placeholder="3.99"
                     disabled={saving}
                     required
                   />
+                  <small>
+                    A Paddle checkout price will be created automatically.
+                  </small>
                 </label>
               )}
 
@@ -719,7 +804,9 @@ export default function FilmStudioPage({ onBack }) {
                 />
                 <span className="admin-file-icon">▶</span>
                 <strong>
-                  {form.videoPath ? "Replace video file" : "Choose video file"}
+                  {form.videoPath
+                    ? "Replace video file"
+                    : "Choose video file"}
                 </strong>
                 <small>MP4, WebM or MOV · Required</small>
                 {videoFile && (
@@ -730,7 +817,9 @@ export default function FilmStudioPage({ onBack }) {
                   </span>
                 )}
                 {!videoFile && form.videoPath && (
-                  <span className="selected-file">Current video saved</span>
+                  <span className="selected-file">
+                    Current video saved
+                  </span>
                 )}
               </label>
 
@@ -743,7 +832,9 @@ export default function FilmStudioPage({ onBack }) {
                 />
                 <span className="admin-file-icon">▧</span>
                 <strong>
-                  {form.posterPath ? "Replace poster image" : "Choose poster image"}
+                  {form.posterPath
+                    ? "Replace poster image"
+                    : "Choose poster image"}
                 </strong>
                 <small>PNG, JPG or WebP · Optional</small>
                 {posterFile && (
@@ -754,7 +845,9 @@ export default function FilmStudioPage({ onBack }) {
                   </span>
                 )}
                 {!posterFile && form.posterPath && (
-                  <span className="selected-file">Current poster saved</span>
+                  <span className="selected-file">
+                    Current poster saved
+                  </span>
                 )}
               </label>
             </div>
@@ -781,7 +874,9 @@ export default function FilmStudioPage({ onBack }) {
               <span className="publish-toggle-control" />
               <span>
                 <strong>
-                  {form.isPublished ? "Publish this film" : "Keep as draft"}
+                  {form.isPublished
+                    ? "Publish this film"
+                    : "Keep as draft"}
                 </strong>
                 <small>
                   {form.isPublished
@@ -793,7 +888,10 @@ export default function FilmStudioPage({ onBack }) {
           </div>
 
           <div className="admin-upload-footer">
-            <p className="admin-required-note"><b>*</b> Required fields</p>
+            <p className="admin-required-note">
+              <b>*</b> Required fields
+            </p>
+
             <div className="game-form-actions">
               {form.id && (
                 <button
@@ -805,7 +903,12 @@ export default function FilmStudioPage({ onBack }) {
                   Cancel edit
                 </button>
               )}
-              <button className="admin-upload-button" type="submit" disabled={saving}>
+
+              <button
+                className="admin-upload-button"
+                type="submit"
+                disabled={saving}
+              >
                 {saving
                   ? "Saving film..."
                   : form.id
@@ -834,8 +937,11 @@ export default function FilmStudioPage({ onBack }) {
           <div>
             <p className="eyebrow">FILM MANAGEMENT</p>
             <h2>My films</h2>
-            <p>Manage drafts, published films, access types and media files.</p>
+            <p>
+              Manage drafts, published films, access types and media files.
+            </p>
           </div>
+
           <button
             className="game-refresh-button"
             type="button"
@@ -859,7 +965,10 @@ export default function FilmStudioPage({ onBack }) {
               const posterUrl = getPosterUrl(film.poster_path);
 
               return (
-                <article className="game-manager-card film-manager-card" key={film.id}>
+                <article
+                  className="game-manager-card film-manager-card"
+                  key={film.id}
+                >
                   <div
                     className="game-manager-cover film-manager-cover"
                     style={
@@ -892,8 +1001,10 @@ export default function FilmStudioPage({ onBack }) {
                           {film.duration || "Unknown duration"}
                         </p>
                       </div>
+
                       <strong>
-                        {film.access_type === "rent"
+                        {film.access_type === "rent" ||
+                        film.access_type === "paid"
                           ? formatCurrency(film.price_cents)
                           : film.access_type === "subscription"
                             ? "Subscription"
@@ -912,7 +1023,9 @@ export default function FilmStudioPage({ onBack }) {
                           ? "Subscription only"
                           : film.access_type === "rent"
                             ? "Rental"
-                            : "Free"}
+                            : film.access_type === "paid"
+                              ? "Paid"
+                              : "Free"}
                       </span>
                       <span>Created: {formatDate(film.created_at)}</span>
                     </div>
@@ -925,6 +1038,7 @@ export default function FilmStudioPage({ onBack }) {
                       >
                         Edit
                       </button>
+
                       <button
                         className={
                           film.is_published
@@ -936,13 +1050,16 @@ export default function FilmStudioPage({ onBack }) {
                       >
                         {film.is_published ? "Unpublish" : "Publish"}
                       </button>
+
                       <button
                         className="game-delete-button"
                         type="button"
                         onClick={() => deleteFilm(film)}
                         disabled={deletingId === film.id}
                       >
-                        {deletingId === film.id ? "Deleting..." : "Delete"}
+                        {deletingId === film.id
+                          ? "Deleting..."
+                          : "Delete"}
                       </button>
                     </div>
                   </div>
