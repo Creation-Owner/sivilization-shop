@@ -8,59 +8,97 @@ export default function ProfileSection({
   onOpenSubscriptions,
 }) {
   const [subscription, setSubscription] = useState(null);
-  const [loadingSubscription, setLoadingSubscription] =
-    useState(true);
+  const [loadingSubscription, setLoadingSubscription] = useState(true);
+
+  const [fullName, setFullName] = useState("");
+  const [savedName, setSavedName] = useState("");
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [savingName, setSavingName] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+  const [profileMessageType, setProfileMessageType] = useState("");
 
   useEffect(() => {
     let alive = true;
 
-    async function loadSubscription() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    async function loadProfile() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
 
-      if (!user) {
+        if (userError) throw userError;
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (error) throw error;
+
         if (alive) {
-          setLoadingSubscription(false);
+          const name = data?.full_name || "";
+          setFullName(name);
+          setSavedName(name);
         }
-
-        return;
+      } catch (error) {
+        if (alive) {
+          setProfileMessage(
+            error?.message || "Could not load your profile name."
+          );
+          setProfileMessageType("error");
+        }
+      } finally {
+        if (alive) setLoadingProfile(false);
       }
-
-      const { data, error } = await supabase
-        .from("subscriptions")
-        .select(`
-          status,
-          ends_at,
-          plan_slug,
-          subscription_plans (
-            name,
-            billing_interval
-          )
-        `)
-        .eq("user_id", user.id)
-        .in("status", ["active", "trialing", "past_due"])
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (!alive) {
-        return;
-      }
-
-      if (!error && data) {
-        const isStillValid =
-          !data.ends_at ||
-          new Date(data.ends_at) > new Date();
-
-        setSubscription(isStillValid ? data : null);
-      } else {
-        setSubscription(null);
-      }
-
-      setLoadingSubscription(false);
     }
 
+    async function loadSubscription() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError) throw userError;
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("subscriptions")
+          .select(`
+            status,
+            ends_at,
+            plan_slug,
+            subscription_plans (
+              name,
+              billing_interval
+            )
+          `)
+          .eq("user_id", user.id)
+          .in("status", ["active", "trialing", "past_due"])
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (!alive) return;
+
+        const isStillValid =
+          data &&
+          (!data.ends_at || new Date(data.ends_at) > new Date());
+
+        setSubscription(isStillValid ? data : null);
+      } catch (error) {
+        console.error("Could not load membership:", error);
+        if (alive) setSubscription(null);
+      } finally {
+        if (alive) setLoadingSubscription(false);
+      }
+    }
+
+    loadProfile();
     loadSubscription();
 
     return () => {
@@ -68,27 +106,123 @@ export default function ProfileSection({
     };
   }, []);
 
+  async function handleSaveName(event) {
+    event.preventDefault();
+    setProfileMessage("");
+
+    const normalizedName = fullName.trim().replace(/\s+/g, " ");
+
+    if (!normalizedName || normalizedName.length > 80) {
+      setProfileMessage("Enter a name between 1 and 80 characters.");
+      setProfileMessageType("error");
+      return;
+    }
+
+    setSavingName(true);
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) throw userError;
+
+      if (!user) {
+        throw new Error("Please sign in to update your profile.");
+      }
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({ full_name: normalizedName })
+        .eq("id", user.id)
+        .select("full_name")
+        .single();
+
+      if (error) throw error;
+
+      setFullName(data.full_name || "");
+      setSavedName(data.full_name || "");
+      setProfileMessage("Your profile name was saved.");
+      setProfileMessageType("success");
+    } catch (error) {
+      setProfileMessage(
+        error?.message || "Could not save your profile name."
+      );
+      setProfileMessageType("error");
+    } finally {
+      setSavingName(false);
+    }
+  }
+
   const planName =
     subscription?.subscription_plans?.name ||
     subscription?.plan_slug ||
     "Membership";
 
+  const avatarLetter =
+    savedName.trim().charAt(0).toUpperCase() || "S";
+
   return (
     <section className="section-page">
       <div className="profile-layout">
-        <div className="profile-avatar">S</div>
+        <div className="profile-avatar">{avatarLetter}</div>
 
         <div>
           <p className="eyebrow">ACCOUNT</p>
-          <h1>Your profile</h1>
+          <h1>{savedName || "Your profile"}</h1>
           <p className="profile-email">{email}</p>
           <p className="profile-account-type">
-            {isAdmin
-              ? "Administrator account"
-              : "Customer account"}
+            {isAdmin ? "Administrator account" : "Customer account"}
           </p>
         </div>
       </div>
+
+      <section className="subscription-status-card">
+        <p className="eyebrow">PUBLIC PROFILE</p>
+        <h2>Your name</h2>
+
+        <p>
+          This name will be visible to other users beside your film
+          comments. Choose a name you are comfortable sharing publicly.
+        </p>
+
+        <form className="auth-form" onSubmit={handleSaveName}>
+          <label htmlFor="profile-full-name">Display name</label>
+
+          <input
+            id="profile-full-name"
+            type="text"
+            value={fullName}
+            onChange={(event) => setFullName(event.target.value)}
+            maxLength={80}
+            placeholder="Enter your name"
+            disabled={loadingProfile || savingName}
+            required
+          />
+
+          <button
+            className="media-watch-button"
+            type="submit"
+            disabled={loadingProfile || savingName}
+          >
+            {loadingProfile
+              ? "Loading…"
+              : savingName
+                ? "Saving…"
+                : "Save name"}
+          </button>
+        </form>
+
+        {profileMessage && (
+          <p
+            className={`notice ${profileMessageType}`}
+            role={profileMessageType === "error" ? "alert" : "status"}
+          >
+            {profileMessage}
+          </p>
+        )}
+      </section>
 
       <section className="subscription-status-card profile-membership-card">
         <p className="eyebrow">MEMBERSHIP</p>
@@ -107,9 +241,7 @@ export default function ProfileSection({
               <p>
                 Access until:{" "}
                 <strong>
-                  {new Date(
-                    subscription.ends_at
-                  ).toLocaleDateString()}
+                  {new Date(subscription.ends_at).toLocaleDateString()}
                 </strong>
               </p>
             )}
@@ -122,10 +254,7 @@ export default function ProfileSection({
         ) : (
           <>
             <h2>No active membership</h2>
-
-            <p>
-              Subscribe to unlock films marked as subscription-only.
-            </p>
+            <p>Subscribe to unlock films marked as subscription-only.</p>
 
             <button
               className="media-watch-button"

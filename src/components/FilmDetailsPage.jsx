@@ -9,17 +9,13 @@ function formatCurrency(cents) {
   }).format((Number(cents) || 0) / 100);
 }
 
-async function loadCommentAuthorNames(userIds) {
-  const ids = [...new Set(userIds.filter(Boolean))];
-
-  if (ids.length === 0) {
-    return {};
-  }
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id,full_name")
-    .in("id", ids);
+async function loadCommentAuthorNames(filmId) {
+  const { data, error } = await supabase.rpc(
+    "get_film_comment_authors",
+    {
+      p_film_id: filmId,
+    },
+  );
 
   if (error) {
     throw error;
@@ -28,7 +24,15 @@ async function loadCommentAuthorNames(userIds) {
   return Object.fromEntries(
     (data || []).map((profile) => [
       profile.id,
-      profile.full_name?.trim() || "Sivilization member",
+      {
+        name: profile.full_name?.trim() || "Sivilization member",
+        role:
+          profile.is_owner === true
+            ? "Owner"
+            : profile.is_admin === true
+              ? "Admin"
+              : null,
+      },
     ]),
   );
 }
@@ -87,7 +91,8 @@ function FilmDetailsPage({
 
   function getCommentAuthorName(comment) {
     return (
-      commentAuthorNames[comment.user_id] || "Sivilization member"
+      commentAuthorNames[comment.user_id]?.name ||
+      "Sivilization member"
     );
   }
 
@@ -175,13 +180,16 @@ function FilmDetailsPage({
     let cancelled = false;
 
     async function loadNames() {
+      if (isSample || !film.id || comments.length === 0) {
+        setCommentAuthorNames({});
+        return;
+      }
+
       try {
-        const names = await loadCommentAuthorNames(
-          comments.map((comment) => comment.user_id),
-        );
+        const authors = await loadCommentAuthorNames(film.id);
 
         if (!cancelled) {
-          setCommentAuthorNames(names);
+          setCommentAuthorNames(authors);
         }
       } catch (error) {
         console.error(
@@ -200,7 +208,7 @@ function FilmDetailsPage({
     return () => {
       cancelled = true;
     };
-  }, [comments]);
+  }, [film.id, isSample, comments]);
 
   useEffect(() => {
     let cancelled = false;
@@ -895,6 +903,9 @@ function FilmDetailsPage({
 
                   const avatarLetter =
                     authorName.charAt(0).toUpperCase() || "S";
+                  
+                  const authorRole =
+                    commentAuthorNames[comment.user_id]?.role || null;
 
                   return (
                     <article
@@ -910,10 +921,21 @@ function FilmDetailsPage({
 
                       <div className="comment-content">
                         <div className="comment-header">
-                          <strong>
-                            {authorName}
-                            {isOwnComment ? " (You)" : ""}
-                          </strong>
+                          <div className="comment-author-details">
+                            <strong>{authorName}</strong>
+
+                            {authorRole && (
+                              <span
+                                className={`comment-role-badge ${authorRole.toLowerCase()}`}
+                              >
+                                {authorRole}
+                              </span>
+                            )}
+
+                            {isOwnComment && (
+                              <span className="comment-you-label">(You)</span>
+                            )}
+                          </div>
 
                           <time dateTime={comment.created_at}>
                             {new Date(
