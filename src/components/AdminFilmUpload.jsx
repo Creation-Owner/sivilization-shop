@@ -66,7 +66,7 @@ function getTusConfig() {
 
   if (!supabaseUrl || !apiKey) {
     throw new Error(
-      "Supabase URL or public API key is not configured."
+      "Supabase URL or public API key is not configured.",
     );
   }
 
@@ -138,27 +138,6 @@ async function uploadResumable(file, path, onProgress) {
   });
 }
 
-async function createFilmPrice(filmId) {
-  const { data, error } = await supabase.functions.invoke(
-    "create-film-price",
-    {
-      body: {
-        film_id: filmId,
-      },
-    }
-  );
-
-  if (error) {
-    throw error;
-  }
-
-  if (data?.error) {
-    throw new Error(data.error);
-  }
-
-  return data?.priceId || null;
-}
-
 export default function AdminFilmUpload({ onUploaded }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -168,6 +147,7 @@ export default function AdminFilmUpload({ onUploaded }) {
 
   const [accessType, setAccessType] = useState("free");
   const [priceUsd, setPriceUsd] = useState("");
+  const [paddlePriceId, setPaddlePriceId] = useState("");
 
   const [videoFile, setVideoFile] = useState(null);
   const [posterFile, setPosterFile] = useState(null);
@@ -194,7 +174,7 @@ export default function AdminFilmUpload({ onUploaded }) {
       setVideoFile(null);
       showMessage(
         "Choose an MP4, WebM, or MOV video file.",
-        "error"
+        "error",
       );
       return;
     }
@@ -216,7 +196,7 @@ export default function AdminFilmUpload({ onUploaded }) {
       setPosterFile(null);
       showMessage(
         "Choose a JPG, PNG, or WebP poster image.",
-        "error"
+        "error",
       );
       return;
     }
@@ -226,7 +206,7 @@ export default function AdminFilmUpload({ onUploaded }) {
       setPosterFile(null);
       showMessage(
         "Poster images must be 10 MB or smaller.",
-        "error"
+        "error",
       );
       return;
     }
@@ -242,7 +222,35 @@ export default function AdminFilmUpload({ onUploaded }) {
 
     if (nextAccessType === "free") {
       setPriceUsd("");
+      setPaddlePriceId("");
     }
+  }
+
+  async function createFilmPrice(filmId) {
+    const { data, error } = await supabase.functions.invoke(
+      "create-film-price",
+      {
+        body: {
+          film_id: filmId,
+        },
+      },
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    if (!data?.priceId) {
+      throw new Error(
+        "Paddle price was created, but no price ID was returned.",
+      );
+    }
+
+    return data.priceId;
   }
 
   async function handleUpload(event) {
@@ -259,14 +267,27 @@ export default function AdminFilmUpload({ onUploaded }) {
     }
 
     const priceInDollars = Number(priceUsd || 0);
+    const isPaidAccess =
+      accessType === "paid" || accessType === "rent";
 
     if (
-      accessType === "paid" &&
+      isPaidAccess &&
       (!Number.isFinite(priceInDollars) || priceInDollars <= 0)
     ) {
       showMessage(
-        "Enter a price greater than $0.00 for a paid film.",
-        "error"
+        "Enter a price greater than $0.00 for a paid or rental film.",
+        "error",
+      );
+      return;
+    }
+
+    if (
+      accessType === "paid" &&
+      !paddlePriceId.trim()
+    ) {
+      showMessage(
+        "Enter the Paddle price ID for this paid film.",
+        "error",
       );
       return;
     }
@@ -278,7 +299,6 @@ export default function AdminFilmUpload({ onUploaded }) {
     let videoPath = null;
     let posterPath = null;
     let filmSaved = false;
-    let newFilmId = null;
 
     try {
       const {
@@ -312,7 +332,7 @@ export default function AdminFilmUpload({ onUploaded }) {
       const uploadId = crypto.randomUUID();
 
       videoPath = `videos/${uploadId}-${safeFileName(
-        videoFile.name
+        videoFile.name,
       )}`;
 
       showMessage("Uploading video… 0%");
@@ -324,7 +344,7 @@ export default function AdminFilmUpload({ onUploaded }) {
 
       if (posterFile) {
         posterPath = `posters/${uploadId}-${safeFileName(
-          posterFile.name
+          posterFile.name,
         )}`;
 
         showMessage("Uploading poster…");
@@ -334,12 +354,11 @@ export default function AdminFilmUpload({ onUploaded }) {
 
       showMessage("Saving film as an unpublished draft…");
 
-      const priceCents =
-        accessType === "paid"
-          ? Math.round(priceInDollars * 100)
-          : 0;
+      const priceCents = isPaidAccess
+        ? Math.round(priceInDollars * 100)
+        : 0;
 
-      const { data: insertedFilm, error: filmError } = await supabase
+      const { data: newFilm, error: filmError } = await supabase
         .from("films")
         .insert({
           title: title.trim(),
@@ -353,9 +372,13 @@ export default function AdminFilmUpload({ onUploaded }) {
           created_by: user.id,
 
           access_type: accessType,
-          is_paid: accessType === "paid",
+          is_paid: isPaidAccess,
           price_cents: priceCents,
-          paddle_price_id: null,
+
+          paddle_price_id:
+            accessType === "paid"
+              ? paddlePriceId.trim()
+              : null,
 
           is_published: false,
         })
@@ -366,42 +389,14 @@ export default function AdminFilmUpload({ onUploaded }) {
         throw filmError;
       }
 
-      newFilmId = insertedFilm?.id || null;
       filmSaved = true;
 
-      if (accessType === "paid" && newFilmId) {
-        showMessage("Creating Paddle checkout price…");
+      if (accessType === "rent") {
+        showMessage("Creating Paddle rental price…");
 
-        try {
-          const priceId = await createFilmPrice(newFilmId);
+        await createFilmPrice(newFilm.id);
 
-          if (priceId) {
-            showMessage(
-              "Film uploaded and Paddle checkout price created.",
-              "success"
-            );
-          } else {
-            showMessage(
-              "Film uploaded, but Paddle did not return a price ID.",
-              "error"
-            );
-          }
-        } catch (priceError) {
-          console.error(
-            "Paddle price creation failed:",
-            priceError
-          );
-
-          showMessage(
-            "Film uploaded, but Paddle price creation failed. You can retry it later.",
-            "error"
-          );
-        }
-      } else {
-        showMessage(
-          "Film uploaded and saved as an unpublished draft.",
-          "success"
-        );
+        showMessage("Paddle rental price created.");
       }
 
       setTitle("");
@@ -412,11 +407,17 @@ export default function AdminFilmUpload({ onUploaded }) {
 
       setAccessType("free");
       setPriceUsd("");
+      setPaddlePriceId("");
 
       setVideoFile(null);
       setPosterFile(null);
 
       event.currentTarget.reset();
+
+      showMessage(
+        "Film uploaded and saved as an unpublished draft.",
+        "success",
+      );
 
       onUploaded?.();
     } catch (error) {
@@ -433,7 +434,7 @@ export default function AdminFilmUpload({ onUploaded }) {
           if (cleanupError) {
             console.error(
               "Could not remove incomplete upload:",
-              cleanupError
+              cleanupError,
             );
           }
         }
@@ -443,7 +444,7 @@ export default function AdminFilmUpload({ onUploaded }) {
         error instanceof Error
           ? error.message
           : "Upload failed.",
-        "error"
+        "error",
       );
     } finally {
       setLoading(false);
@@ -569,9 +570,8 @@ export default function AdminFilmUpload({ onUploaded }) {
               <h3>Access and payment</h3>
 
               <p>
-                Choose whether this film is free or requires a
-                Paddle payment. A Paddle price is created
-                automatically for paid films.
+                Choose whether this film is free, rented, or
+                permanently purchased.
               </p>
             </div>
           </div>
@@ -586,13 +586,16 @@ export default function AdminFilmUpload({ onUploaded }) {
                 disabled={loading}
               >
                 <option value="free">Free for everyone</option>
+                <option value="rent">
+                  Rent — temporary rental payment
+                </option>
                 <option value="paid">
-                  Paid — purchase required
+                  Paid — permanent purchase
                 </option>
               </select>
             </label>
 
-            {accessType === "paid" && (
+            {isPaidAccess && (
               <label className="admin-field">
                 <span>
                   Price in USD <b>*</b>
@@ -617,6 +620,39 @@ export default function AdminFilmUpload({ onUploaded }) {
                 </small>
               </label>
             )}
+
+            {accessType === "rent" && (
+              <div className="admin-field admin-field-wide">
+                <small>
+                  A Paddle rental price will be created automatically
+                  after the film is saved.
+                </small>
+              </div>
+            )}
+
+            {accessType === "paid" && (
+              <label className="admin-field admin-field-wide">
+                <span>
+                  Paddle price ID <b>*</b>
+                </span>
+
+                <input
+                  type="text"
+                  value={paddlePriceId}
+                  onChange={(event) =>
+                    setPaddlePriceId(event.target.value)
+                  }
+                  placeholder="pri_..."
+                  disabled={loading}
+                  required
+                />
+
+                <small>
+                  Create a matching Sandbox price in Paddle, then
+                  paste its `pri_...` ID here.
+                </small>
+              </label>
+            )}
           </div>
         </div>
 
@@ -626,6 +662,7 @@ export default function AdminFilmUpload({ onUploaded }) {
 
             <div>
               <h3>Film files</h3>
+
               <p>
                 Large video uploads can resume after network
                 interruptions.

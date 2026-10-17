@@ -3518,3 +3518,43 @@ button {
   color: #94a3b8;
   font-size: 12px;
 }
+.media-rent-button {
+  margin-top: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #0f766e;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.media-rent-button:hover:not(:disabled) {
+  background: #115e59;
+}
+
+.media-rent-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.media-rent-button {
+  margin-top: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #0f766e;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.media-rent-button:hover:not(:disabled) {
+  background: #115e59;
+}
+
+.media-rent-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

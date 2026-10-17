@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 
 const EMPTY_FORM = {
   id: null,
@@ -74,21 +75,34 @@ async function createFilmPrice(filmId) {
   const { data, error } = await supabase.functions.invoke(
     "create-film-price",
     {
-      body: {
-        film_id: filmId,
-      },
-    }
+      body: { film_id: filmId },
+    },
   );
 
   if (error) {
-    throw error;
+    let message = error.message || "Could not create Paddle price.";
+
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const body = await error.context.json();
+        message = body?.error || message;
+      } catch {
+        // Keep the original error if the response is not JSON.
+      }
+    }
+
+    throw new Error(message);
   }
 
   if (data?.error) {
     throw new Error(data.error);
   }
 
-  return data?.priceId || null;
+  if (!data?.priceId) {
+    throw new Error("The function returned no Paddle price ID.");
+  }
+
+  return data.priceId;
 }
 
 export default function FilmStudioPage({ onBack }) {
@@ -431,6 +445,12 @@ export default function FilmStudioPage({ onBack }) {
       if (saveError) throw saveError;
 
       databaseSaveCompleted = true;
+      console.log("FILM SAVE CHECK", {
+        accessType: form.accessType,
+        isPaidFilmType,
+        filmId: savedFilm?.id,
+        paddlePriceId: savedFilm?.paddle_price_id,
+      });
 
       const oldVideoBucket =
         form.storedVideoBucket ||
@@ -458,16 +478,24 @@ export default function FilmStudioPage({ onBack }) {
         try {
           const priceId = await createFilmPrice(savedFilm.id);
 
-          if (priceId) {
-            priceMessage = " Paddle checkout price was created automatically.";
-          } else {
+        if (priceId) {
+          savedFilm = {
+            ...savedFilm,
+            paddle_price_id: priceId,
+          };
+
+          priceMessage = " Paddle checkout price was created automatically.";
+        } else {
             priceMessage =
               " However, Paddle did not return a checkout price ID.";
           }
         } catch (priceError) {
           console.error("Could not create Paddle price:", priceError);
+
           priceMessage =
-            " However, Paddle price creation failed. You can retry later.";
+            ` However, Paddle price creation failed: ${
+              priceError?.message || "Unknown error"
+            }`;
         }
       }
 
@@ -479,13 +507,14 @@ export default function FilmStudioPage({ onBack }) {
           : [savedFilm, ...current]
       );
 
+      resetForm();
+
       showMessage(
         `${savedFilm.title} was saved successfully.${priceMessage}`,
         priceMessage.includes("failed") || priceMessage.includes("did not")
           ? "error"
           : "success"
       );
-
       resetForm();
     } catch (error) {
       console.error("Could not save film:", error);

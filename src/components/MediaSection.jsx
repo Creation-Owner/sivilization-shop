@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { buyItem } from "../paddle";
 import AdminFilmUpload from "./AdminFilmUpload";
 
 const categories = [
@@ -71,7 +72,6 @@ function getPosterUrl(row) {
   if (row.poster_url) return row.poster_url;
   if (!row.poster_path) return null;
 
-  // Posters only. Do not create public video URLs here.
   const { data } = supabase.storage
     .from("films")
     .getPublicUrl(row.poster_path);
@@ -95,16 +95,10 @@ function convertDatabaseFilm(row) {
     rating: String(row.rating ?? "0"),
     color: "#172554",
     progress: 0,
-
-    // Preserve only the path; the detail page asks get-film-stream to verify access.
     video_path: row.video_path || null,
-
-    // Keep direct URLs only for legacy external video records.
     video_url: row.video_url || null,
-
     poster_path: row.poster_path || null,
     poster_url: getPosterUrl(row),
-
     access_type: accessType,
     price_cents: Number(row.price_cents || 0),
     paddle_price_id: row.paddle_price_id || null,
@@ -139,12 +133,21 @@ function getPosterStyle(film) {
   };
 }
 
-function FilmCard({ film, onOpenFilm }) {
+function FilmCard({ film, busy, onOpenFilm, onRent }) {
+  const isRentable = film.access_type === "rent";
+
   return (
-    <button
-      type="button"
+    <div
       className="media-film-card clickable-film-card"
+      role="button"
+      tabIndex={0}
       onClick={() => onOpenFilm(film)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenFilm(film);
+        }
+      }}
       aria-label={`Open ${film.title}`}
     >
       <div className="media-film-poster" style={getPosterStyle(film)}>
@@ -170,12 +173,35 @@ function FilmCard({ film, onOpenFilm }) {
         <p>
           {film.genre} · {film.duration}
         </p>
+
+        {isRentable && (
+          <button
+            type="button"
+            className="media-rent-button"
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRent(film);
+            }}
+          >
+            {busy
+              ? "Opening checkout..."
+              : `Rent for $${(film.price_cents / 100).toFixed(2)}`}
+          </button>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 
-function MediaRow({ title, subtitle, films, onOpenFilm }) {
+function MediaRow({
+  title,
+  subtitle,
+  films,
+  onOpenFilm,
+  onRent,
+  busyFilmId,
+}) {
   if (!films.length) return null;
 
   return (
@@ -192,7 +218,9 @@ function MediaRow({ title, subtitle, films, onOpenFilm }) {
           <FilmCard
             key={film.id}
             film={film}
+            busy={busyFilmId === film.id}
             onOpenFilm={onOpenFilm}
+            onRent={onRent}
           />
         ))}
       </div>
@@ -200,12 +228,17 @@ function MediaRow({ title, subtitle, films, onOpenFilm }) {
   );
 }
 
-function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
+export default function MediaSection({
+  search = "",
+  onOpenFilm,
+  onOpenSubscriptions,
+}) {
   const [databaseFilms, setDatabaseFilms] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("All films");
   const [isAdmin, setIsAdmin] = useState(false);
   const [loadingFilms, setLoadingFilms] = useState(true);
   const [filmsError, setFilmsError] = useState("");
+  const [busyFilmId, setBusyFilmId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,6 +323,7 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
     }
 
     const query = search.trim().toLowerCase();
+
     if (query) {
       result = result.filter((film) =>
         `${film.title} ${film.genre} ${film.description}`
@@ -311,12 +345,61 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 30);
+
     return new Date(film.created_at) >= cutoff;
   });
 
   const recommended = visibleFilms.filter(
     (film) => Number(film.rating) >= 8.1,
   );
+
+  async function handleRentFilm(film) {
+    if (film.access_type !== "rent") return;
+
+    if (!film.paddle_price_id) {
+      window.alert(
+        "This film does not have a rental price yet. Save it again in Film Studio to create one automatically.",
+      );
+      return;
+    }
+
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error) {
+      window.alert(error.message || "Could not check your sign-in.");
+      return;
+    }
+
+    if (!user) {
+      window.alert("Please sign in before renting a film.");
+      return;
+    }
+
+    setBusyFilmId(film.id);
+
+    try {
+      await buyItem({
+        priceId: film.paddle_price_id,
+        customData: {
+          user_id: user.id,
+          film_id: film.id,
+          payment_type: "film",
+          access_type: "rent",
+        },
+      });
+    } catch (checkoutError) {
+      console.error("Could not start film rental checkout:", checkoutError);
+      window.alert(
+        checkoutError?.message ||
+          "Could not open checkout. Please try again.",
+      );
+    } finally {
+      setBusyFilmId(null);
+    }
+  }
 
   function handleOpenFilm(film) {
     if (typeof onOpenFilm !== "function") {
@@ -374,6 +457,8 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
         subtitle="Films from Film Studio"
         films={visibleDatabaseFilms}
         onOpenFilm={handleOpenFilm}
+        onRent={handleRentFilm}
+        busyFilmId={busyFilmId}
       />
 
       <MediaRow
@@ -381,6 +466,8 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
         subtitle="Recently published"
         films={newReleases}
         onOpenFilm={handleOpenFilm}
+        onRent={handleRentFilm}
+        busyFilmId={busyFilmId}
       />
 
       <MediaRow
@@ -388,6 +475,8 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
         subtitle="Popular with viewers"
         films={recommended}
         onOpenFilm={handleOpenFilm}
+        onRent={handleRentFilm}
+        busyFilmId={busyFilmId}
       />
 
       <MediaRow
@@ -395,12 +484,13 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
         subtitle="Explore the catalogue"
         films={visibleFilms}
         onOpenFilm={handleOpenFilm}
+        onRent={handleRentFilm}
+        busyFilmId={busyFilmId}
       />
 
       {isAdmin && (
         <AdminFilmUpload
           onUploaded={() => {
-            // Reloading the page refreshes the catalogue after an upload.
             window.location.reload();
           }}
         />
@@ -408,5 +498,3 @@ function MediaSection({ search = "", onOpenFilm, onOpenSubscriptions }) {
     </section>
   );
 }
-
-export default MediaSection;

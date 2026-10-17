@@ -37,7 +37,7 @@ async function loadCommentAuthorNames(filmId) {
   );
 }
 
-function FilmDetailsPage({
+export default function FilmDetailsPage({
   film,
   allFilms = [],
   email,
@@ -76,6 +76,8 @@ function FilmDetailsPage({
     accessType === "paid" ||
     accessType === "rent" ||
     isSubscriptionFilm;
+
+  const isRentalFilm = accessType === "rent";
 
   const relatedFilms = useMemo(
     () =>
@@ -126,6 +128,18 @@ function FilmDetailsPage({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.get("payment") === "success") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("payment");
+      window.history.replaceState({}, "", url.toString());
+
+      window.location.reload();
+    }
+  }, [film.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -588,17 +602,16 @@ function FilmDetailsPage({
       );
     }
 
-    const isRental = accessType === "rent";
     const hasCheckoutPrice = Boolean(film.paddle_price_id);
 
     return (
       <div className="film-paywall">
         <h2>
-          {isRental ? "Rental required" : "Purchase required"}
+          {isRentalFilm ? "Rental required" : "Purchase required"}
         </h2>
 
         <p>
-          {isRental
+          {isRentalFilm
             ? "Rent this film to unlock playback."
             : "Buy this film to unlock playback."}
         </p>
@@ -615,7 +628,7 @@ function FilmDetailsPage({
             ? "Opening checkout…"
             : hasCheckoutPrice
               ? `${
-                  isRental ? "Rent film" : "Buy film"
+                  isRentalFilm ? "Rent film" : "Buy film"
                 } — ${formatCurrency(film.price_cents)}`
               : "Payment temporarily unavailable"}
         </button>
@@ -903,7 +916,7 @@ function FilmDetailsPage({
 
                   const avatarLetter =
                     authorName.charAt(0).toUpperCase() || "S";
-                  
+
                   const authorRole =
                     commentAuthorNames[comment.user_id]?.role || null;
 
@@ -969,5 +982,3 @@ function FilmDetailsPage({
     </section>
   );
 }
-
-export default FilmDetailsPage;

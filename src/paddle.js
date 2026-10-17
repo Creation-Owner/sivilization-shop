@@ -17,14 +17,13 @@ async function getPaddle() {
       .then((paddle) => {
         if (!paddle) {
           throw new Error(
-            "Paddle could not initialize. Check the client token."
+            "Paddle could not initialize. Check the client token.",
           );
         }
 
         return paddle;
       })
       .catch((error) => {
-        // Allow a later attempt to retry initialization.
         paddleInstancePromise = undefined;
         throw error;
       });
@@ -47,7 +46,7 @@ function normalizeCheckoutItems(items) {
   return items.map((item, index) => {
     if (!item?.priceId) {
       throw new Error(
-        `Checkout item ${index + 1} is missing a Paddle price ID.`
+        `Checkout item ${index + 1} is missing a Paddle price ID.`,
       );
     }
 
@@ -55,7 +54,7 @@ function normalizeCheckoutItems(items) {
 
     if (!Number.isInteger(quantity) || quantity < 1) {
       throw new Error(
-        `Checkout item ${index + 1} has an invalid quantity.`
+        `Checkout item ${index + 1} has an invalid quantity.`,
       );
     }
 
@@ -95,6 +94,7 @@ export async function openMultiItemCheckout({ items, customData }) {
     settings: getCheckoutSettings(),
   });
 }
+
 export async function openPaddleCheckout({
   priceId,
   paymentType,
