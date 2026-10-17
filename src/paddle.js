@@ -11,7 +11,10 @@ async function getPaddle() {
     }
 
     paddleInstancePromise = initializePaddle({
-      environment: "sandbox",
+      environment:
+        import.meta.env.VITE_PADDLE_ENVIRONMENT === "production"
+          ? "production"
+          : "sandbox",
       token,
     })
       .then((paddle) => {
