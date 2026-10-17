@@ -1,1102 +1,248 @@
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "../supabaseClient";
 import { FunctionsHttpError } from "@supabase/supabase-js";
+import { supabase } from "../supabaseClient";
 
 const EMPTY_FORM = {
-  id: null,
-  title: "",
-  description: "",
-  genre: "Drama",
-  releaseYear: "",
-  duration: "",
-  accessType: "free",
-  price: "",
-  isPublished: false,
-  videoPath: null,
-  posterPath: null,
-  storedVideoBucket: null,
+  id: null, title: "", description: "", genre: "Drama", releaseYear: "",
+  duration: "", accessType: "free", price: "", isPublished: false,
+  videoPath: null, posterPath: null, storedVideoBucket: null,
 };
-
-const BUCKETS = {
-  freeVideos: "films-free",
-  paidVideos: "films-paid",
-  posters: "film-posters",
-};
-
-function formatCurrency(cents) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format((Number(cents) || 0) / 100);
-}
-
-function formatDate(value) {
-  if (!value) return "Unknown date";
-
-  return new Date(value).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatFileSize(bytes) {
-  if (!bytes) return "0 KB";
-
-  const megabytes = bytes / 1024 / 1024;
-  return megabytes >= 1
-    ? `${megabytes.toFixed(1)} MB`
-    : `${Math.ceil(bytes / 1024)} KB`;
-}
-
-function makeSafeFileName(fileName) {
-  return fileName
-    .toLowerCase()
-    .replace(/[^a-z0-9.]+/g, "-")
-    .replace(/-+/g, "-");
-}
-
-function getPosterUrl(path, bucket = BUCKETS.posters) {
+const BUCKETS = { freeVideos: "films-free", paidVideos: "films-paid", posters: "film-posters" };
+const GENRES = ["Action", "Adventure", "Anime", "Cartoon", "Comedy", "Crime", "Documentary", "Drama", "Fantasy", "Horror", "Mystery", "Romance", "Sci-Fi", "Thriller"];
+const isChargeable = (type) => type === "paid" || type === "rent";
+const currency = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((Number(cents) || 0) / 100);
+const bucketForAccess = (type) => type === "free" ? BUCKETS.freeVideos : BUCKETS.paidVideos;
+const safeName = (name) => name.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/-+/g, "-");
+function posterUrl(path) {
   if (!path) return null;
-
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return data?.publicUrl || null;
+  return supabase.storage.from(BUCKETS.posters).getPublicUrl(path).data?.publicUrl || null;
 }
-
-function bucketForAccess(accessType) {
-  return accessType === "free" ? BUCKETS.freeVideos : BUCKETS.paidVideos;
-}
-
-function getErrorMessage(error) {
-  return error?.message || "An unexpected error occurred.";
-}
-
 async function createFilmPrice(filmId) {
-  const { data, error } = await supabase.functions.invoke(
-    "create-film-price",
-    {
-      body: { film_id: filmId },
-    },
-  );
-
+  const { data, error } = await supabase.functions.invoke("create-film-price", { body: { film_id: filmId } });
   if (error) {
     let message = error.message || "Could not create Paddle price.";
-
     if (error instanceof FunctionsHttpError) {
-      try {
-        const body = await error.context.json();
-        message = body?.error || message;
-      } catch {
-        // Keep the original error if the response is not JSON.
-      }
+      try { message = (await error.context.json())?.error || message; } catch { /* Retain original error. */ }
     }
-
     throw new Error(message);
   }
-
-  if (data?.error) {
-    throw new Error(data.error);
-  }
-
-  if (!data?.priceId) {
-    throw new Error("The function returned no Paddle price ID.");
-  }
-
+  if (data?.error) throw new Error(data.error);
+  if (!data?.priceId) throw new Error("The function returned no Paddle price ID.");
   return data.priceId;
 }
 
 export default function FilmStudioPage({ onBack }) {
   const [checkingAccess, setCheckingAccess] = useState(true);
-  const [hasStudioAccess, setHasStudioAccess] = useState(false);
+  const [allowed, setAllowed] = useState(false);
   const [films, setFilms] = useState([]);
-  const [loadingFilms, setLoadingFilms] = useState(true);
-
+  const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [videoFile, setVideoFile] = useState(null);
   const [posterFile, setPosterFile] = useState(null);
-
   const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
+  const [busyId, setBusyId] = useState(null);
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState("");
-
+  const [messageType, setMessageType] = useState("info");
   const formRef = useRef(null);
-
-  function showMessage(text, type = "info") {
-    setMessage(text);
-    setMessageType(type);
-  }
-
-  function updateForm(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
-  }
-
+  const saveLock = useRef(false);
+  const originalFilm = useRef(null);
+  function show(text, type = "info") { setMessage(text); setMessageType(type); }
+  function update(field, value) { setForm((current) => ({ ...current, [field]: value })); }
   function resetForm() {
-    setForm({ ...EMPTY_FORM });
-    setVideoFile(null);
-    setPosterFile(null);
-    setMessage("");
-
-    if (formRef.current) formRef.current.reset();
+    setForm({ ...EMPTY_FORM }); setVideoFile(null); setPosterFile(null);
+    originalFilm.current = null; formRef.current?.reset();
   }
-
-  async function removeStorageFile(bucket, path) {
-    if (!bucket || !path) return;
-
-    const { error } = await supabase.storage.from(bucket).remove([path]);
-
-    if (error) {
-      console.error(`Could not remove ${bucket}/${path}:`, error);
-    }
+  async function requireAdmin() {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    if (!user) throw new Error("Sign in with an owner or administrator account.");
+    const { data: profile, error: profileError } = await supabase.from("profiles")
+      .select("is_admin,is_owner").eq("id", user.id).maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile?.is_admin && !profile?.is_owner) throw new Error("Owner or administrator access required.");
+    return user;
   }
-
-  async function uploadStorageFile(bucket, path, file) {
-    const { error } = await supabase.storage.from(bucket).upload(path, file, {
-      cacheControl: "3600",
-      upsert: false,
-      contentType: file.type || undefined,
-    });
-
-    if (error) {
-      throw new Error(`${bucket} upload failed: ${error.message}`);
-    }
-  }
-
-  async function loadFilmStudio() {
-    setCheckingAccess(true);
-    setLoadingFilms(true);
-    setMessage("");
-
+  async function loadStudio() {
+    setLoading(true); setCheckingAccess(true);
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError) throw userError;
-
-      if (!user) {
-        setHasStudioAccess(false);
-        setFilms([]);
-        return;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("is_admin, is_owner")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-
-      const allowed =
-        profile?.is_admin === true || profile?.is_owner === true;
-
-      setHasStudioAccess(allowed);
-
-      if (!allowed) {
-        setFilms([]);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("films")
-        .select("*")
-        .order("created_at", { ascending: false });
-
+      await requireAdmin(); setAllowed(true);
+      const { data, error } = await supabase.from("films").select("*").order("created_at", { ascending: false });
       if (error) throw error;
-
       setFilms(data || []);
-    } catch (error) {
-      console.error("Could not load Film Studio:", error);
-      showMessage(
-        `Could not load Film Studio: ${getErrorMessage(error)}`,
-        "error"
-      );
-    } finally {
-      setCheckingAccess(false);
-      setLoadingFilms(false);
-    }
+    } catch (error) { setAllowed(false); show(error.message, "error"); }
+    finally { setLoading(false); setCheckingAccess(false); }
   }
-
-  useEffect(() => {
-    loadFilmStudio();
-  }, []);
-
-  function handleVideoChange(event) {
-    const file = event.target.files?.[0] || null;
-
-    if (!file) {
-      setVideoFile(null);
-      return;
-    }
-
-    if (!file.type.startsWith("video/")) {
-      event.target.value = "";
-      setVideoFile(null);
-      showMessage("Choose a valid video file.", "error");
-      return;
-    }
-
-    setVideoFile(file);
-    setMessage("");
+  useEffect(() => { loadStudio(); }, []);
+  async function removeFile(bucket, path) {
+    if (!bucket || !path) return;
+    const { error } = await supabase.storage.from(bucket).remove([path]);
+    if (error) console.error("Storage cleanup failed:", error);
   }
-
-  function handlePosterChange(event) {
-    const file = event.target.files?.[0] || null;
-
-    if (!file) {
-      setPosterFile(null);
-      return;
-    }
-
-    if (!file.type.startsWith("image/")) {
-      event.target.value = "";
-      setPosterFile(null);
-      showMessage("Choose a valid poster image.", "error");
-      return;
-    }
-
-    setPosterFile(file);
-    setMessage("");
-  }
-
-  function startEditing(film) {
-    setForm({
-      id: film.id,
-      title: film.title || "",
-      description: film.description || "",
-      genre: film.genre || "Drama",
-      releaseYear: film.release_year ? String(film.release_year) : "",
-      duration: film.duration || "",
-      accessType: film.access_type || "free",
-      price:
-        film.access_type === "rent" || film.access_type === "paid"
-          ? ((Number(film.price_cents) || 0) / 100).toFixed(2)
-          : "",
-      isPublished: film.is_published !== false,
-      videoPath: film.video_path || null,
-      posterPath: film.poster_path || null,
-      storedVideoBucket:
-        film.video_bucket ||
-        (film.access_type === "free"
-          ? BUCKETS.freeVideos
-          : BUCKETS.paidVideos),
+  async function uploadFile(bucket, path, file) {
+    const { error } = await supabase.storage.from(bucket).upload(path, file, {
+      cacheControl: "3600", upsert: false, contentType: file.type || undefined,
     });
-
-    setVideoFile(null);
-    setPosterFile(null);
-    setMessage("");
-
+    if (error) throw new Error(`${bucket} upload failed: ${error.message}`);
+  }
+  function editFilm(film) {
+    originalFilm.current = film;
+    setForm({
+      id: film.id, title: film.title || "", description: film.description || "",
+      genre: film.genre || "Drama", releaseYear: film.release_year ? String(film.release_year) : "",
+      duration: film.duration || "", accessType: film.access_type || "free",
+      price: isChargeable(film.access_type) ? ((Number(film.price_cents) || 0) / 100).toFixed(2) : "",
+      isPublished: film.is_published === true, videoPath: film.video_path || null,
+      posterPath: film.poster_path || null,
+      storedVideoBucket: film.video_bucket || bucketForAccess(film.access_type),
+    });
+    setVideoFile(null); setPosterFile(null); setMessage(""); formRef.current?.reset();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-
+  function storeFilm(film) {
+    setFilms((current) => current.some((item) => item.id === film.id)
+      ? current.map((item) => item.id === film.id ? film : item) : [film, ...current]);
+  }
   async function handleSaveFilm(event) {
     event.preventDefault();
-    setMessage("");
-
-    if (!form.title.trim()) {
-      showMessage("Enter a film title.", "error");
-      return;
+    if (saveLock.current) return;
+    const chargeable = isChargeable(form.accessType);
+    const priceCents = chargeable ? Math.round(Number(form.price) * 100) : 0;
+    if (!form.title.trim()) return show("Enter a film title.", "error");
+    if (!form.videoPath && !videoFile) return show("Choose a video file.", "error");
+    if (chargeable && (!Number.isSafeInteger(priceCents) || priceCents <= 0)) return show("Enter a valid positive price.", "error");
+    const old = originalFilm.current;
+    if (old?.paddle_price_id && chargeable &&
+        (Number(old.price_cents) !== priceCents || old.access_type !== form.accessType)) {
+      return show("This film already has a Paddle price. Changing its amount or paid/rental type needs a server-side price replacement; this version blocks it to avoid charging the old amount.", "error");
     }
-
-    if (!form.videoPath && !videoFile) {
-      showMessage("Choose a video file.", "error");
-      return;
+    if (form.videoPath && !videoFile && form.accessType !== "free" && form.storedVideoBucket === BUCKETS.freeVideos) {
+      return show("This video is stored in films-free. Choose the video file again to upload it to films-paid before charging for it.", "error");
     }
-
-    const isPaidFilmType =
-      form.accessType === "paid" || form.accessType === "rent";
-
-    if (
-      isPaidFilmType &&
-      (!Number.isFinite(Number(form.price)) || Number(form.price) <= 0)
-    ) {
-      showMessage("Enter a valid price greater than $0.00.", "error");
-      return;
-    }
-
-    setSaving(true);
-
-    let uploadedVideoBucket = null;
-    let uploadedVideoPath = null;
-    let uploadedPosterPath = null;
-    let databaseSaveCompleted = false;
-
+    saveLock.current = true; setSaving(true); show("Checking permissions and saving film…");
+    let uploadedVideo = null, uploadedPoster = null, databaseSaved = false, savedFilm = null;
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError) throw userError;
-      if (!user) throw new Error("Sign in to manage films.");
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("is_admin, is_owner")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-
-      if (!profile?.is_admin && !profile?.is_owner) {
-        throw new Error("Only owners and admins can manage films.");
-      }
-
-      const targetVideoBucket = bucketForAccess(form.accessType);
-      let videoPath = form.videoPath;
-      let posterPath = form.posterPath;
-      let videoBucket = form.storedVideoBucket || targetVideoBucket;
-
+      const user = await requireAdmin();
+      let videoPath = form.videoPath, posterPath = form.posterPath;
+      let videoBucket = form.storedVideoBucket || bucketForAccess(form.accessType);
       if (videoFile) {
-        const safeName = makeSafeFileName(videoFile.name);
-        uploadedVideoPath = `videos/${crypto.randomUUID()}-${safeName}`;
-        uploadedVideoBucket = targetVideoBucket;
-
-        await uploadStorageFile(
-          uploadedVideoBucket,
-          uploadedVideoPath,
-          videoFile
-        );
-
-        videoPath = uploadedVideoPath;
-        videoBucket = uploadedVideoBucket;
+        videoBucket = bucketForAccess(form.accessType);
+        uploadedVideo = { bucket: videoBucket, path: `videos/${crypto.randomUUID()}-${safeName(videoFile.name)}` };
+        show("Uploading video…"); await uploadFile(videoBucket, uploadedVideo.path, videoFile);
+        videoPath = uploadedVideo.path;
       }
-
       if (posterFile) {
-        const safeName = makeSafeFileName(posterFile.name);
-        uploadedPosterPath = `posters/${crypto.randomUUID()}-${safeName}`;
-
-        await uploadStorageFile(
-          BUCKETS.posters,
-          uploadedPosterPath,
-          posterFile
-        );
-
-        posterPath = uploadedPosterPath;
+        uploadedPoster = `posters/${crypto.randomUUID()}-${safeName(posterFile.name)}`;
+        show("Uploading poster…"); await uploadFile(BUCKETS.posters, uploadedPoster, posterFile);
+        posterPath = uploadedPoster;
       }
-
-      const filmData = {
-        title: form.title.trim(),
-        description: form.description.trim() || null,
-        genre: form.genre,
-        release_year: Number(form.releaseYear) || null,
-        duration: form.duration.trim() || null,
-        access_type: form.accessType,
-        is_paid: isPaidFilmType,
-        price_cents: isPaidFilmType
-          ? Math.round(Number(form.price) * 100)
-          : 0,
-        video_path: videoPath,
-        poster_path: posterPath,
-        created_by: user.id,
-        is_published: form.isPublished,
+      const payload = {
+        title: form.title.trim(), description: form.description.trim() || null,
+        genre: form.genre, release_year: Number(form.releaseYear) || null,
+        duration: form.duration.trim() || null, access_type: form.accessType,
+        is_paid: chargeable, price_cents: priceCents, video_path: videoPath,
+        video_bucket: videoBucket, poster_path: posterPath,
+        is_published: chargeable ? false : form.isPublished,
         updated_at: new Date().toISOString(),
       };
-
-      let savedFilm;
-      let saveError;
-
-      const payloadWithBucket = {
-        ...filmData,
-        video_bucket: videoBucket,
-      };
-
-      if (form.id) {
-        const result = await supabase
-          .from("films")
-          .update(payloadWithBucket)
-          .eq("id", form.id)
-          .select()
-          .single();
-
-        savedFilm = result.data;
-        saveError = result.error;
+      const result = form.id
+        ? await supabase.from("films").update(payload).eq("id", form.id).select().single()
+        : await supabase.from("films").insert({ ...payload, created_by: user.id }).select().single();
+      if (result.error) throw result.error;
+      savedFilm = result.data; databaseSaved = true; storeFilm(savedFilm);
+      if (uploadedVideo && form.videoPath) await removeFile(form.storedVideoBucket, form.videoPath);
+      if (uploadedPoster && form.posterPath) await removeFile(BUCKETS.posters, form.posterPath);
+      if (chargeable && !savedFilm.paddle_price_id) {
+        show("Film saved as a draft. Creating Paddle checkout price…");
+        const priceId = await createFilmPrice(savedFilm.id);
+        savedFilm = { ...savedFilm, paddle_price_id: priceId }; storeFilm(savedFilm);
+      }
+      if (chargeable && form.isPublished) {
+        const { data, error } = await supabase.from("films").update({ is_published: true })
+          .eq("id", savedFilm.id).select().single();
+        if (error) throw error;
+        savedFilm = data; storeFilm(data);
+      }
+      resetForm();
+      show(`${savedFilm.title} saved${savedFilm.is_published ? " and published" : " as a draft"}.${chargeable ? " Paddle checkout price is ready." : ""}`, "success");
+    } catch (error) {
+      console.error("Film save failed:", error);
+      if (!databaseSaved) {
+        if (uploadedVideo) await removeFile(uploadedVideo.bucket, uploadedVideo.path);
+        if (uploadedPoster) await removeFile(BUCKETS.posters, uploadedPoster);
+        show(`Could not save film: ${error.message}`, "error");
       } else {
-        const result = await supabase
-          .from("films")
-          .insert(payloadWithBucket)
-          .select()
-          .single();
-
-        savedFilm = result.data;
-        saveError = result.error;
+        if (savedFilm) editFilm(savedFilm);
+        show(`Film saved, but checkout setup or publication failed: ${error.message}. Files were kept. Use Save changes to retry this same film, not upload a duplicate.`, "error");
       }
-
-      if (saveError?.message?.includes("video_bucket")) {
-        const retry = form.id
-          ? await supabase
-              .from("films")
-              .update(filmData)
-              .eq("id", form.id)
-              .select()
-              .single()
-          : await supabase
-              .from("films")
-              .insert(filmData)
-              .select()
-              .single();
-
-        savedFilm = retry.data;
-        saveError = retry.error;
-      }
-
-      if (saveError) throw saveError;
-
-      databaseSaveCompleted = true;
-      console.log("FILM SAVE CHECK", {
-        accessType: form.accessType,
-        isPaidFilmType,
-        filmId: savedFilm?.id,
-        paddlePriceId: savedFilm?.paddle_price_id,
-      });
-
-      const oldVideoBucket =
-        form.storedVideoBucket ||
-        (form.accessType === "free"
-          ? BUCKETS.freeVideos
-          : BUCKETS.paidVideos);
-
-      if (uploadedVideoPath && form.videoPath) {
-        await removeStorageFile(oldVideoBucket, form.videoPath);
-      }
-
-      if (uploadedPosterPath && form.posterPath) {
-        await removeStorageFile(BUCKETS.posters, form.posterPath);
-      }
-
-      let priceMessage = "";
-
-      if (
-        isPaidFilmType &&
-        savedFilm?.id &&
-        !savedFilm.paddle_price_id
-      ) {
-        showMessage("Creating Paddle checkout price…");
-
-        try {
-          const priceId = await createFilmPrice(savedFilm.id);
-
-        if (priceId) {
-          savedFilm = {
-            ...savedFilm,
-            paddle_price_id: priceId,
-          };
-
-          priceMessage = " Paddle checkout price was created automatically.";
-        } else {
-            priceMessage =
-              " However, Paddle did not return a checkout price ID.";
-          }
-        } catch (priceError) {
-          console.error("Could not create Paddle price:", priceError);
-
-          priceMessage =
-            ` However, Paddle price creation failed: ${
-              priceError?.message || "Unknown error"
-            }`;
-        }
-      }
-
-      setFilms((current) =>
-        form.id
-          ? current.map((film) =>
-              film.id === savedFilm.id ? savedFilm : film
-            )
-          : [savedFilm, ...current]
-      );
-
-      resetForm();
-
-      showMessage(
-        `${savedFilm.title} was saved successfully.${priceMessage}`,
-        priceMessage.includes("failed") || priceMessage.includes("did not")
-          ? "error"
-          : "success"
-      );
-      resetForm();
-    } catch (error) {
-      console.error("Could not save film:", error);
-
-      if (!databaseSaveCompleted) {
-        if (uploadedVideoBucket && uploadedVideoPath) {
-          await removeStorageFile(uploadedVideoBucket, uploadedVideoPath);
-        }
-        if (uploadedPosterPath) {
-          await removeStorageFile(BUCKETS.posters, uploadedPosterPath);
-        }
-      }
-
-      showMessage(
-        `Could not save film: ${getErrorMessage(error)}`,
-        "error"
-      );
-    } finally {
-      setSaving(false);
-    }
+    } finally { saveLock.current = false; setSaving(false); }
   }
-
   async function togglePublished(film) {
-    setMessage("");
-
+    setBusyId(film.id);
     try {
-      const { data, error } = await supabase
-        .from("films")
-        .update({
-          is_published: !film.is_published,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", film.id)
-        .select()
-        .single();
-
+      await requireAdmin();
+      if (!film.is_published && isChargeable(film.access_type) && !film.paddle_price_id) {
+        throw new Error("Edit and save this film first so its Paddle price can be created before publication.");
+      }
+      const { data, error } = await supabase.from("films").update({ is_published: !film.is_published })
+        .eq("id", film.id).select().single();
       if (error) throw error;
-
-      setFilms((current) =>
-        current.map((item) => (item.id === data.id ? data : item))
-      );
-
-      showMessage(
-        data.is_published
-          ? `${data.title} is now published.`
-          : `${data.title} is now unpublished.`,
-        "success"
-      );
-    } catch (error) {
-      showMessage(
-        `Could not update film publication status: ${getErrorMessage(error)}`,
-        "error"
-      );
-    }
+      storeFilm(data); show(`${data.title} ${data.is_published ? "published" : "unpublished"}.`, "success");
+    } catch (error) { show(error.message, "error"); }
+    finally { setBusyId(null); }
   }
-
   async function deleteFilm(film) {
-    const confirmed = window.confirm(
-      `Delete "${film.title}"? This permanently removes the film record and its files.`
-    );
-
-    if (!confirmed) return;
-
-    setDeletingId(film.id);
-    setMessage("");
-
+    if (!window.confirm(`Delete "${film.title}" and its files? This cannot be undone.`)) return;
+    setBusyId(film.id);
     try {
-      const { error } = await supabase
-        .from("films")
-        .delete()
-        .eq("id", film.id);
-
+      await requireAdmin();
+      const { error } = await supabase.from("films").delete().eq("id", film.id);
       if (error) throw error;
-
-      const videoBucket =
-        film.video_bucket ||
-        (film.access_type === "free"
-          ? BUCKETS.freeVideos
-          : BUCKETS.paidVideos);
-
-      await removeStorageFile(videoBucket, film.video_path);
-      await removeStorageFile(BUCKETS.posters, film.poster_path);
-
-      setFilms((current) =>
-        current.filter((item) => item.id !== film.id)
-      );
-
+      await removeFile(film.video_bucket || bucketForAccess(film.access_type), film.video_path);
+      await removeFile(BUCKETS.posters, film.poster_path);
+      setFilms((current) => current.filter((item) => item.id !== film.id));
       if (form.id === film.id) resetForm();
-
-      showMessage(`${film.title} was deleted.`, "success");
-    } catch (error) {
-      showMessage(
-        `Could not delete film: ${getErrorMessage(error)}`,
-        "error"
-      );
-    } finally {
-      setDeletingId(null);
-    }
+      show("Film deleted.", "success");
+    } catch (error) { show(error.message, "error"); }
+    finally { setBusyId(null); }
   }
-
-  if (checkingAccess) {
-    return (
-      <section className="section-page">
-        <p className="media-status">Checking owner/admin permissions...</p>
-      </section>
-    );
-  }
-
-  if (!hasStudioAccess) {
-    return (
-      <section className="section-page">
-        <div className="admin-no-access">
-          <p className="eyebrow">RESTRICTED</p>
-          <h1>Owner or admin access required</h1>
-          <p>Only owners and administrators can open Film Studio.</p>
-          <button type="button" onClick={onBack}>
-            Return to admin dashboard
-          </button>
-        </div>
-      </section>
-    );
-  }
-
+  if (checkingAccess) return <section className="section-page"><p>Checking owner/admin permissions…</p></section>;
+  if (!allowed) return <section className="section-page"><h1>Owner or admin access required</h1><p>{message}</p><button onClick={onBack}>Back to admin</button></section>;
   return (
     <section className="section-page studio-page">
-      <div className="studio-page-header">
-        <div>
-          <p className="eyebrow">ADMINISTRATION / FILM STUDIO</p>
-          <h1>Film Studio</h1>
-          <p>
-            Upload, publish, edit and manage films, cartoons and dramas.
-          </p>
-        </div>
-
-        <button className="studio-back-button" type="button" onClick={onBack}>
-          ← Back to admin
-        </button>
-      </div>
-
+      <div className="studio-page-header"><div><p className="eyebrow">ADMINISTRATION / FILM STUDIO</p><h1>Film Studio</h1><p>Upload, publish, edit and manage films.</p></div><button type="button" onClick={onBack}>← Back to admin</button></div>
       <section className="admin-upload-panel film-management-panel">
-        <div className="admin-upload-header">
-          <div>
-            <p className="eyebrow">
-              {form.id ? "EDIT FILM" : "ADD NEW FILM"}
-            </p>
-            <h2>
-              {form.id ? `Editing: ${form.title}` : "Film information"}
-            </h2>
-            <p>
-              Free videos upload to the public `films-free` bucket.
-              Paid, rental, and subscription videos upload to the private
-              `films-paid` bucket. Posters go to `film-posters`.
-            </p>
+        <div className="admin-upload-header"><div><p className="eyebrow">{form.id ? "EDIT FILM" : "ADD NEW FILM"}</p><h2>{form.id ? `Editing: ${form.title}` : "Film information"}</h2><p>Rental and paid videos use films-paid. Posters use film-posters. Checkout prices are created automatically.</p></div></div>
+        <form ref={formRef} className="admin-upload-form" onSubmit={handleSaveFilm}>
+          <div className="admin-form-grid">
+            <label className="admin-field admin-field-wide"><span>Film title *</span><input value={form.title} onChange={(e) => update("title", e.target.value)} required disabled={saving} maxLength={200} /></label>
+            <label className="admin-field"><span>Genre</span><select value={form.genre} onChange={(e) => update("genre", e.target.value)} disabled={saving}>{GENRES.map((genre) => <option key={genre}>{genre}</option>)}</select></label>
+            <label className="admin-field"><span>Release year</span><input type="number" min="1888" max="2100" value={form.releaseYear} onChange={(e) => update("releaseYear", e.target.value)} disabled={saving} /></label>
+            <label className="admin-field"><span>Duration</span><input value={form.duration} onChange={(e) => update("duration", e.target.value)} placeholder="2h 10m" disabled={saving} /></label>
+            <label className="admin-field"><span>Access type</span><select value={form.accessType} onChange={(e) => update("accessType", e.target.value)} disabled={saving}><option value="free">Free</option><option value="paid">Paid — buy forever</option><option value="rent">Rental</option><option value="subscription">Subscription only</option></select></label>
+            {isChargeable(form.accessType) && <label className="admin-field"><span>{form.accessType === "rent" ? "Rental" : "Purchase"} price in USD *</span><input type="number" min="0.01" step="0.01" value={form.price} onChange={(e) => update("price", e.target.value)} required disabled={saving} /><small>No manual Paddle price ID required.</small></label>}
+            <label className="admin-field admin-field-wide"><span>Description</span><textarea rows={5} value={form.description} onChange={(e) => update("description", e.target.value)} disabled={saving} /></label>
           </div>
-
-          <div className="admin-badge">Owner / admin</div>
-        </div>
-
-        <form
-          ref={formRef}
-          className="admin-upload-form"
-          onSubmit={handleSaveFilm}
-        >
-          <div className="admin-form-section">
-            <div className="admin-section-title">
-              <span>01</span>
-              <div>
-                <h3>Film details</h3>
-                <p>Information customers see in the media catalogue.</p>
-              </div>
-            </div>
-
-            <div className="admin-form-grid">
-              <label className="admin-field admin-field-wide">
-                <span>
-                  Film title <b>*</b>
-                </span>
-                <input
-                  type="text"
-                  value={form.title}
-                  onChange={(event) =>
-                    updateForm("title", event.target.value)
-                  }
-                  placeholder="Example: The Last Horizon"
-                  disabled={saving}
-                  required
-                />
-              </label>
-
-              <label className="admin-field">
-                <span>Genre</span>
-                <select
-                  value={form.genre}
-                  onChange={(event) =>
-                    updateForm("genre", event.target.value)
-                  }
-                  disabled={saving}
-                >
-                  <option>Action</option>
-                  <option>Adventure</option>
-                  <option>Comedy</option>
-                  <option>Crime</option>
-                  <option>Documentary</option>
-                  <option>Drama</option>
-                  <option>Fantasy</option>
-                  <option>Horror</option>
-                  <option>Romance</option>
-                  <option>Sci-Fi</option>
-                  <option>Thriller</option>
-                </select>
-              </label>
-
-              <label className="admin-field">
-                <span>Release year</span>
-                <input
-                  type="number"
-                  min="1888"
-                  max="2100"
-                  value={form.releaseYear}
-                  onChange={(event) =>
-                    updateForm("releaseYear", event.target.value)
-                  }
-                  placeholder="2026"
-                  disabled={saving}
-                />
-              </label>
-
-              <label className="admin-field">
-                <span>Duration</span>
-                <input
-                  type="text"
-                  value={form.duration}
-                  onChange={(event) =>
-                    updateForm("duration", event.target.value)
-                  }
-                  placeholder="2h 10m"
-                  disabled={saving}
-                />
-              </label>
-
-              <label className="admin-field">
-                <span>Access type</span>
-                <select
-                  value={form.accessType}
-                  onChange={(event) =>
-                    updateForm("accessType", event.target.value)
-                  }
-                  disabled={saving}
-                >
-                  <option value="free">Free</option>
-                  <option value="paid">Paid — buy forever</option>
-                  <option value="rent">Rental</option>
-                  <option value="subscription">Subscription only</option>
-                </select>
-              </label>
-
-              {(form.accessType === "paid" ||
-                form.accessType === "rent") && (
-                <label className="admin-field">
-                  <span>
-                    {form.accessType === "rent"
-                      ? "Rental price in USD"
-                      : "Purchase price in USD"}{" "}
-                    <b>*</b>
-                  </span>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={form.price}
-                    onChange={(event) =>
-                      updateForm("price", event.target.value)
-                    }
-                    placeholder="3.99"
-                    disabled={saving}
-                    required
-                  />
-                  <small>
-                    A Paddle checkout price will be created automatically.
-                  </small>
-                </label>
-              )}
-
-              <label className="admin-field admin-field-wide">
-                <span>Description</span>
-                <textarea
-                  value={form.description}
-                  onChange={(event) =>
-                    updateForm("description", event.target.value)
-                  }
-                  placeholder="Write a short description of the film..."
-                  rows={5}
-                  disabled={saving}
-                />
-              </label>
-            </div>
+          <div className="admin-file-grid">
+            <label className="admin-file-card"><span>Video {form.videoPath ? "(optional replacement)" : "*"}</span><input type="file" accept="video/*" required={!form.videoPath} disabled={saving} onChange={(e) => { const file = e.target.files?.[0] || null; if (file && !file.type.startsWith("video/")) { e.target.value = ""; setVideoFile(null); return show("Choose a video file.", "error"); } setVideoFile(file); }} /><small>{videoFile ? `${videoFile.name} (${(videoFile.size / 1048576).toFixed(1)} MB)` : form.videoPath ? "Current video saved" : "Choose a video"}</small></label>
+            <label className="admin-file-card"><span>Poster image</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={saving} onChange={(e) => { const file = e.target.files?.[0] || null; if (file && (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10485760)) { e.target.value = ""; setPosterFile(null); return show("Choose a JPG, PNG or WebP poster up to 10 MB.", "error"); } setPosterFile(file); }} /><small>{posterFile?.name || (form.posterPath ? "Current poster saved" : "Optional, max 10 MB")}</small></label>
           </div>
-
-          <div className="admin-form-section">
-            <div className="admin-section-title">
-              <span>02</span>
-              <div>
-                <h3>Film files</h3>
-                <p>Upload a video and optional poster.</p>
-              </div>
-            </div>
-
-            <div className="admin-file-grid">
-              <label className="admin-file-card admin-video-file">
-                <input
-                  type="file"
-                  accept="video/mp4,video/webm,video/quicktime"
-                  onChange={handleVideoChange}
-                  disabled={saving}
-                  required={!form.videoPath}
-                />
-                <span className="admin-file-icon">▶</span>
-                <strong>
-                  {form.videoPath
-                    ? "Replace video file"
-                    : "Choose video file"}
-                </strong>
-                <small>MP4, WebM or MOV · Required</small>
-                {videoFile && (
-                  <span className="selected-file">
-                    {videoFile.name}
-                    <br />
-                    {formatFileSize(videoFile.size)}
-                  </span>
-                )}
-                {!videoFile && form.videoPath && (
-                  <span className="selected-file">
-                    Current video saved
-                  </span>
-                )}
-              </label>
-
-              <label className="admin-file-card">
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={handlePosterChange}
-                  disabled={saving}
-                />
-                <span className="admin-file-icon">▧</span>
-                <strong>
-                  {form.posterPath
-                    ? "Replace poster image"
-                    : "Choose poster image"}
-                </strong>
-                <small>PNG, JPG or WebP · Optional</small>
-                {posterFile && (
-                  <span className="selected-file">
-                    {posterFile.name}
-                    <br />
-                    {formatFileSize(posterFile.size)}
-                  </span>
-                )}
-                {!posterFile && form.posterPath && (
-                  <span className="selected-file">
-                    Current poster saved
-                  </span>
-                )}
-              </label>
-            </div>
-          </div>
-
-          <div className="admin-form-section">
-            <div className="admin-section-title">
-              <span>03</span>
-              <div>
-                <h3>Visibility</h3>
-                <p>Publish now or keep this film hidden as a draft.</p>
-              </div>
-            </div>
-
-            <label className="publish-toggle">
-              <input
-                type="checkbox"
-                checked={form.isPublished}
-                onChange={(event) =>
-                  updateForm("isPublished", event.target.checked)
-                }
-                disabled={saving}
-              />
-              <span className="publish-toggle-control" />
-              <span>
-                <strong>
-                  {form.isPublished
-                    ? "Publish this film"
-                    : "Keep as draft"}
-                </strong>
-                <small>
-                  {form.isPublished
-                    ? "Customers can see this film in Media."
-                    : "Only owners/admins can see this film in Film Studio."}
-                </small>
-              </span>
-            </label>
-          </div>
-
-          <div className="admin-upload-footer">
-            <p className="admin-required-note">
-              <b>*</b> Required fields
-            </p>
-
-            <div className="game-form-actions">
-              {form.id && (
-                <button
-                  className="game-reset-button"
-                  type="button"
-                  onClick={resetForm}
-                  disabled={saving}
-                >
-                  Cancel edit
-                </button>
-              )}
-
-              <button
-                className="admin-upload-button"
-                type="submit"
-                disabled={saving}
-              >
-                {saving
-                  ? "Saving film..."
-                  : form.id
-                    ? "Save changes"
-                    : form.isPublished
-                      ? "Publish film"
-                      : "Save draft"}
-              </button>
-            </div>
-          </div>
-
-          {message && (
-            <p
-              className={`admin-upload-message ${messageType}`}
-              role="status"
-              aria-live="polite"
-            >
-              {message}
-            </p>
-          )}
+          <label className="publish-toggle"><input type="checkbox" checked={form.isPublished} onChange={(e) => update("isPublished", e.target.checked)} disabled={saving} /><span>Publish after saving and completing checkout setup</span></label>
+          <div className="admin-upload-footer"><div className="game-form-actions"><button type="button" disabled={saving} onClick={() => { resetForm(); setMessage(""); }}>Clear / cancel edit</button><button className="admin-upload-button" type="submit" disabled={saving}>{saving ? "Saving…" : form.id ? "Save changes" : "Save film"}</button></div></div>
+          {message && <p className={`admin-upload-message ${messageType}`} role="status" aria-live="polite" style={{ whiteSpace: "pre-wrap" }}>{message}</p>}
         </form>
       </section>
-
       <section className="game-manager-section film-manager-section">
-        <div className="game-manager-heading">
-          <div>
-            <p className="eyebrow">FILM MANAGEMENT</p>
-            <h2>My films</h2>
-            <p>
-              Manage drafts, published films, access types and media files.
-            </p>
-          </div>
-
-          <button
-            className="game-refresh-button"
-            type="button"
-            onClick={loadFilmStudio}
-            disabled={loadingFilms}
-          >
-            {loadingFilms ? "Loading..." : "Refresh"}
-          </button>
-        </div>
-
-        {loadingFilms ? (
-          <p className="media-status">Loading your films...</p>
-        ) : films.length === 0 ? (
-          <div className="game-manager-empty">
-            <h3>No films uploaded yet</h3>
-            <p>Add your first film above.</p>
-          </div>
-        ) : (
-          <div className="game-manager-list">
-            {films.map((film) => {
-              const posterUrl = getPosterUrl(film.poster_path);
-
-              return (
-                <article
-                  className="game-manager-card film-manager-card"
-                  key={film.id}
-                >
-                  <div
-                    className="game-manager-cover film-manager-cover"
-                    style={
-                      posterUrl
-                        ? {
-                            backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.25), rgba(15, 23, 42, 0.8)), url("${posterUrl}")`,
-                          }
-                        : undefined
-                    }
-                  >
-                    {!posterUrl && <span>🎬</span>}
-                    <span
-                      className={
-                        film.is_published
-                          ? "game-status published"
-                          : "game-status draft"
-                      }
-                    >
-                      {film.is_published ? "Published" : "Draft"}
-                    </span>
-                  </div>
-
-                  <div className="game-manager-info">
-                    <div className="game-manager-title-row">
-                      <div>
-                        <h3>{film.title}</h3>
-                        <p>
-                          {film.genre || "Film"} ·{" "}
-                          {film.release_year || "Unknown year"} ·{" "}
-                          {film.duration || "Unknown duration"}
-                        </p>
-                      </div>
-
-                      <strong>
-                        {film.access_type === "rent" ||
-                        film.access_type === "paid"
-                          ? formatCurrency(film.price_cents)
-                          : film.access_type === "subscription"
-                            ? "Subscription"
-                            : "Free"}
-                      </strong>
-                    </div>
-
-                    <p className="game-manager-description">
-                      {film.description || "No description added yet."}
-                    </p>
-
-                    <div className="game-manager-meta">
-                      <span>
-                        Access:{" "}
-                        {film.access_type === "subscription"
-                          ? "Subscription only"
-                          : film.access_type === "rent"
-                            ? "Rental"
-                            : film.access_type === "paid"
-                              ? "Paid"
-                              : "Free"}
-                      </span>
-                      <span>Created: {formatDate(film.created_at)}</span>
-                    </div>
-
-                    <div className="game-manager-actions">
-                      <button
-                        className="game-edit-button"
-                        type="button"
-                        onClick={() => startEditing(film)}
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        className={
-                          film.is_published
-                            ? "game-unpublish-button"
-                            : "game-publish-button"
-                        }
-                        type="button"
-                        onClick={() => togglePublished(film)}
-                      >
-                        {film.is_published ? "Unpublish" : "Publish"}
-                      </button>
-
-                      <button
-                        className="game-delete-button"
-                        type="button"
-                        onClick={() => deleteFilm(film)}
-                        disabled={deletingId === film.id}
-                      >
-                        {deletingId === film.id
-                          ? "Deleting..."
-                          : "Delete"}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
+        <div className="game-manager-heading"><div><p className="eyebrow">FILM MANAGEMENT</p><h2>My films</h2></div><button type="button" onClick={loadStudio} disabled={saving || loading || Boolean(busyId)}>Refresh</button></div>
+        {loading ? <p>Loading films…</p> : !films.length ? <p>No films uploaded yet.</p> : <div className="game-manager-list">{films.map((film) => {
+          const cover = posterUrl(film.poster_path);
+          return <article className="game-manager-card film-manager-card" key={film.id}>
+            <div className="game-manager-cover film-manager-cover" style={cover ? { backgroundImage: `url("${cover}")`, backgroundSize: "cover" } : undefined}><span>{film.is_published ? "Published" : "Draft"}</span></div>
+            <div className="game-manager-info"><h3>{film.title}</h3><p>{film.genre} · {film.release_year || "Unknown year"} · {film.duration || "Unknown duration"}</p><p>{film.description || "No description added."}</p><p>Access: {film.access_type} · {isChargeable(film.access_type) ? currency(film.price_cents) : film.access_type === "subscription" ? "Subscription" : "Free"}</p>
+              {isChargeable(film.access_type) && <p>Checkout: {film.paddle_price_id ? `Ready (${film.paddle_price_id})` : "Not ready — edit and save to create price"}</p>}
+              <div className="game-manager-actions"><button type="button" disabled={saving || Boolean(busyId)} onClick={() => editFilm(film)}>Edit</button><button type="button" disabled={saving || Boolean(busyId)} onClick={() => togglePublished(film)}>{film.is_published ? "Unpublish" : "Publish"}</button><button type="button" disabled={saving || Boolean(busyId)} onClick={() => deleteFilm(film)}>Delete</button></div>
+            </div>
+          </article>;
+        })}</div>}
       </section>
     </section>
   );
