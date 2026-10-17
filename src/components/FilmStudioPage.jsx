@@ -209,7 +209,7 @@ export default function FilmStudioPage({ onBack }) {
   if (!allowed) return <section className="section-page"><h1>Owner or admin access required</h1><p>{message}</p><button onClick={onBack}>Back to admin</button></section>;
   return (
     <section className="section-page studio-page">
-      <div className="studio-page-header"><div><p className="eyebrow">ADMINISTRATION / FILM STUDIO</p><h1>Film Studio</h1><p>Upload, publish, edit and manage films.</p></div><button type="button" onClick={onBack}>← Back to admin</button></div>
+      <div className="studio-page-header"><div><p className="eyebrow">ADMINISTRATION / FILM STUDIO</p><h1>Film Studio — Checkout Test</h1><h1>Film Studio</h1><p>Upload, publish, edit and manage films.</p></div><button type="button" onClick={onBack}>← Back to admin</button></div>
       <section className="admin-upload-panel film-management-panel">
         <div className="admin-upload-header"><div><p className="eyebrow">{form.id ? "EDIT FILM" : "ADD NEW FILM"}</p><h2>{form.id ? `Editing: ${form.title}` : "Film information"}</h2><p>Rental and paid videos use films-paid. Posters use film-posters. Checkout prices are created automatically.</p></div></div>
         <form ref={formRef} className="admin-upload-form" onSubmit={handleSaveFilm}>
