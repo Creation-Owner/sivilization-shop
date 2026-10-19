@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Upload } from "tus-js-client";
 import { supabase } from "../supabaseClient";
+import { uploadFilmToR2 } from "../r2FilmUpload";
 
 const BUCKET = "films-free";
 const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
@@ -252,9 +253,12 @@ export default function AdminFilmUpload({ onUploaded }) {
 
     return data.priceId;
   }
+  const isPaidAccess =
+     accessType === "paid" || accessType === "rent";
 
   async function handleUpload(event) {
     event.preventDefault();
+  const form = event.currentTarget;
 
     if (!title.trim()) {
       showMessage("Enter a film title.", "error");
@@ -267,8 +271,7 @@ export default function AdminFilmUpload({ onUploaded }) {
     }
 
     const priceInDollars = Number(priceUsd || 0);
-    const isPaidAccess =
-      accessType === "paid" || accessType === "rent";
+
 
     if (
       isPaidAccess &&
@@ -299,6 +302,7 @@ export default function AdminFilmUpload({ onUploaded }) {
     let videoPath = null;
     let posterPath = null;
     let filmSaved = false;
+    let r2Video = null;
 
     try {
       const {
@@ -337,10 +341,14 @@ export default function AdminFilmUpload({ onUploaded }) {
 
       showMessage("Uploading video… 0%");
 
-      await uploadResumable(videoFile, videoPath, (percent) => {
+      showMessage("Uploading video to R2… 0%");
+
+      r2Video = await uploadFilmToR2(videoFile, (percent) => {
         setProgress(percent);
-        showMessage(`Uploading video… ${percent}%`);
+        showMessage(`Uploading video to R2… ${percent}%`);
       });
+
+      videoPath = r2Video.video_path;
 
       if (posterFile) {
         posterPath = `posters/${uploadId}-${safeFileName(
@@ -367,7 +375,9 @@ export default function AdminFilmUpload({ onUploaded }) {
           release_year: Number(releaseYear) || null,
           duration: duration.trim() || null,
           rating: 0,
-          video_path: videoPath,
+          video_path: r2Video.video_path,
+          video_bucket: r2Video.video_bucket,
+          video_storage_provider: r2Video.video_storage_provider,
           poster_path: posterPath,
           created_by: user.id,
 
@@ -412,7 +422,7 @@ export default function AdminFilmUpload({ onUploaded }) {
       setVideoFile(null);
       setPosterFile(null);
 
-      event.currentTarget.reset();
+      eform.reset();
 
       showMessage(
         "Film uploaded and saved as an unpublished draft.",
@@ -424,7 +434,7 @@ export default function AdminFilmUpload({ onUploaded }) {
       console.error("Film upload failed:", error);
 
       if (!filmSaved) {
-        const paths = [videoPath, posterPath].filter(Boolean);
+        const paths = [posterPath].filter(Boolean);
 
         if (paths.length > 0) {
           const { error: cleanupError } = await supabase.storage
@@ -664,8 +674,8 @@ export default function AdminFilmUpload({ onUploaded }) {
               <h3>Film files</h3>
 
               <p>
-                Large video uploads can resume after network
-                interruptions.
+                Videos upload to Cloudflare R2 in chunks with automatic retries.
+                Keep this page open until the upload finishes.
               </p>
             </div>
           </div>
