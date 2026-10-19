@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 
+
 export default function ProfileSection({
   email,
   isAdmin,
+  isOwner = false,
   handleLogout,
   onOpenSubscriptions,
+  onOpenSettings,
+  onOpenWallet,
 }) {
   const [subscription, setSubscription] = useState(null);
   const [loadingSubscription, setLoadingSubscription] = useState(true);
+
 
   const [fullName, setFullName] = useState("");
   const [savedName, setSavedName] = useState("");
@@ -17,8 +22,10 @@ export default function ProfileSection({
   const [profileMessage, setProfileMessage] = useState("");
   const [profileMessageType, setProfileMessageType] = useState("");
 
+
   useEffect(() => {
     let alive = true;
+
 
     async function loadProfile() {
       try {
@@ -27,8 +34,10 @@ export default function ProfileSection({
           error: userError,
         } = await supabase.auth.getUser();
 
+
         if (userError) throw userError;
         if (!user) return;
+
 
         const { data, error } = await supabase
           .from("profiles")
@@ -36,7 +45,9 @@ export default function ProfileSection({
           .eq("id", user.id)
           .maybeSingle();
 
+
         if (error) throw error;
+
 
         if (alive) {
           const name = data?.full_name || "";
@@ -55,6 +66,7 @@ export default function ProfileSection({
       }
     }
 
+
     async function loadSubscription() {
       try {
         const {
@@ -62,8 +74,10 @@ export default function ProfileSection({
           error: userError,
         } = await supabase.auth.getUser();
 
+
         if (userError) throw userError;
         if (!user) return;
+
 
         const { data, error } = await supabase
           .from("subscriptions")
@@ -82,12 +96,15 @@ export default function ProfileSection({
           .limit(1)
           .maybeSingle();
 
+
         if (error) throw error;
         if (!alive) return;
+
 
         const isStillValid =
           data &&
           (!data.ends_at || new Date(data.ends_at) > new Date());
+
 
         setSubscription(isStillValid ? data : null);
       } catch (error) {
@@ -98,19 +115,24 @@ export default function ProfileSection({
       }
     }
 
+
     loadProfile();
     loadSubscription();
+
 
     return () => {
       alive = false;
     };
   }, []);
 
+
   async function handleSaveName(event) {
     event.preventDefault();
     setProfileMessage("");
 
+
     const normalizedName = fullName.trim().replace(/\s+/g, " ");
+
 
     if (!normalizedName || normalizedName.length > 80) {
       setProfileMessage("Enter a name between 1 and 80 characters.");
@@ -118,7 +140,9 @@ export default function ProfileSection({
       return;
     }
 
+
     setSavingName(true);
+
 
     try {
       const {
@@ -126,23 +150,32 @@ export default function ProfileSection({
         error: userError,
       } = await supabase.auth.getUser();
 
+
       if (userError) throw userError;
+
 
       if (!user) {
         throw new Error("Please sign in to update your profile.");
       }
 
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({ full_name: normalizedName })
-        .eq("id", user.id)
-        .select("full_name")
-        .single();
+
+      const { data, error } = await supabase.rpc(
+        "save_own_profile_name",
+        {
+          p_full_name: normalizedName,
+        },
+      );
+
 
       if (error) throw error;
 
-      setFullName(data.full_name || "");
-      setSavedName(data.full_name || "");
+
+      const savedNameValue =
+        typeof data === "string" ? data : normalizedName;
+
+
+      setFullName(savedNameValue);
+      setSavedName(savedNameValue);
       setProfileMessage("Your profile name was saved.");
       setProfileMessageType("success");
     } catch (error) {
@@ -155,40 +188,52 @@ export default function ProfileSection({
     }
   }
 
+
   const planName =
     subscription?.subscription_plans?.name ||
     subscription?.plan_slug ||
     "Membership";
 
+
   const avatarLetter =
     savedName.trim().charAt(0).toUpperCase() || "S";
+
 
   return (
     <section className="section-page">
       <div className="profile-layout">
         <div className="profile-avatar">{avatarLetter}</div>
 
+
         <div>
           <p className="eyebrow">ACCOUNT</p>
           <h1>{savedName || "Your profile"}</h1>
           <p className="profile-email">{email}</p>
           <p className="profile-account-type">
-            {isAdmin ? "Administrator account" : "Customer account"}
+            {isOwner
+              ? "Owner account"
+              : isAdmin
+                ? "Administrator account"
+                : "Customer account"}
           </p>
         </div>
       </div>
 
+
       <section className="subscription-status-card">
         <p className="eyebrow">PUBLIC PROFILE</p>
         <h2>Your name</h2>
+
 
         <p>
           This name will be visible to other users beside your film
           comments. Choose a name you are comfortable sharing publicly.
         </p>
 
+
         <form className="auth-form" onSubmit={handleSaveName}>
           <label htmlFor="profile-full-name">Display name</label>
+
 
           <input
             id="profile-full-name"
@@ -200,6 +245,7 @@ export default function ProfileSection({
             disabled={loadingProfile || savingName}
             required
           />
+
 
           <button
             className="media-watch-button"
@@ -214,6 +260,7 @@ export default function ProfileSection({
           </button>
         </form>
 
+
         {profileMessage && (
           <p
             className={`notice ${profileMessageType}`}
@@ -224,18 +271,22 @@ export default function ProfileSection({
         )}
       </section>
 
+
       <section className="subscription-status-card profile-membership-card">
         <p className="eyebrow">MEMBERSHIP</p>
 
+
         {loadingSubscription ? (
-          <p>Loading your membership status…</p>
+          <p>Loading membership status…</p>
         ) : subscription ? (
           <>
             <h2>{planName}</h2>
 
+
             <p>
               Status: <strong>{subscription.status}</strong>
             </p>
+
 
             {subscription.ends_at && (
               <p>
@@ -246,6 +297,7 @@ export default function ProfileSection({
               </p>
             )}
 
+
             <p>
               Your membership gives you access to subscription-only
               films while it is active.
@@ -255,6 +307,7 @@ export default function ProfileSection({
           <>
             <h2>No active membership</h2>
             <p>Subscribe to unlock films marked as subscription-only.</p>
+
 
             <button
               className="media-watch-button"
@@ -267,10 +320,35 @@ export default function ProfileSection({
         )}
       </section>
 
+
       <div className="profile-settings">
-        <button type="button">Account settings</button>
-        <button type="button">Order history</button>
-        <button type="button">Payment methods</button>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+        >
+          Account settings
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenWallet}
+        >
+          Wallet payment history
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenWallet}
+        >
+          Wallet balance
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenSubscriptions}
+        >
+          Memberships
+        </button>
 
         <button
           className="danger-button"

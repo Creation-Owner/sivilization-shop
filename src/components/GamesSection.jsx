@@ -34,7 +34,9 @@ function GameCard({
   game,
   isPurchased,
   busy,
+  walletBusy,
   onBuy,
+  onBuyWithWallet,
   onPlay,
 }) {
   const isPaid = game.access_type === "paid";
@@ -90,13 +92,25 @@ function GameCard({
           </strong>
 
           {isPaid && !isPurchased ? (
-            <button
-              type="button"
-              onClick={() => onBuy(game)}
-              disabled={busy}
-            >
-              {busy ? "Opening..." : "Buy now"}
-            </button>
+            <div className="game-purchase-actions">
+              <button
+                type="button"
+                onClick={() => onBuy(game)}
+                disabled={busy || walletBusy}
+              >
+                {busy ? "Opening..." : "Buy now"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onBuyWithWallet(game)}
+                disabled={busy || walletBusy}
+              >
+                {walletBusy
+                  ? "Processing..."
+                  : `Buy with wallet — ${formatPrice(game.price_cents)}`}
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -123,6 +137,7 @@ export default function GamesSection() {
   const [loadingGames, setLoadingGames] = useState(true);
   const [gamesError, setGamesError] = useState("");
   const [busyGameId, setBusyGameId] = useState(null);
+  const [buyingWalletGameId, setBuyingWalletGameId] = useState(null);
 
   async function loadGamesAndPurchases() {
     setLoadingGames(true);
@@ -223,6 +238,47 @@ export default function GamesSection() {
       );
     } finally {
       setBusyGameId(null);
+    }
+  }
+
+  async function handleBuyGameWithWallet(game) {
+    if (buyingWalletGameId) return;
+
+    setBuyingWalletGameId(game.id);
+
+    try {
+      const { data, error } = await supabase.rpc(
+        "purchase_with_wallet",
+        {
+          p_item_type: "game",
+          p_item_id: game.id,
+        },
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      window.dispatchEvent(new Event("wallet-updated"));
+
+      setPurchasedGameIds((current) => [
+        ...new Set([...current, game.id]),
+      ]);
+
+      window.alert(
+        `${game.title} was purchased with your wallet. New balance: ${formatPrice(
+          data?.wallet_balance_cents || 0,
+        )}.`,
+      );
+    } catch (walletError) {
+      console.error("Could not purchase game with wallet:", walletError);
+
+      window.alert(
+        walletError?.message ||
+          "Could not complete the wallet purchase.",
+      );
+    } finally {
+      setBuyingWalletGameId(null);
     }
   }
 
@@ -361,7 +417,9 @@ export default function GamesSection() {
             game={game}
             isPurchased={purchasedGameIds.includes(game.id)}
             busy={busyGameId === game.id}
+            walletBusy={buyingWalletGameId === game.id}
             onBuy={handleBuyGame}
+            onBuyWithWallet={handleBuyGameWithWallet}
             onPlay={handlePlayGame}
           />
         ))}

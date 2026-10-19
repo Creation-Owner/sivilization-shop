@@ -62,7 +62,9 @@ export default function FilmDetailsPage({
   const [hasAccess, setHasAccess] = useState(false);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isPrivileged, setIsPrivileged] = useState(false);
+  const [hasComplimentaryAccess, setHasComplimentaryAccess] = useState(false);
   const [buyingFilm, setBuyingFilm] = useState(false);
+  const [buyingWithWallet, setBuyingWithWallet] = useState(false);
 
   const accessType = String(film.access_type || "free").toLowerCase();
 
@@ -231,6 +233,7 @@ export default function FilmDetailsPage({
       setCheckingAccess(true);
       setHasAccess(false);
       setIsPrivileged(false);
+      setHasComplimentaryAccess(false);
 
       try {
         const {
@@ -258,6 +261,7 @@ export default function FilmDetailsPage({
 
         let purchaseValid = false;
         let subscriptionValid = false;
+        let complimentaryValid = false;
 
         if (!isSample) {
           const { data: purchases, error: purchasesError } =
@@ -307,15 +311,37 @@ export default function FilmDetailsPage({
           } else {
             subscriptionValid = Boolean(sub);
           }
+
+          const {
+            data: complimentary,
+            error: complimentaryError,
+          } = await supabase
+            .from("owner_complimentary_access")
+            .select("expires_at")
+            .eq("user_id", user.id)
+            .gt("expires_at", new Date().toISOString())
+            .limit(1)
+            .maybeSingle();
+
+          if (complimentaryError) {
+            console.error(
+              "Could not check complimentary access:",
+              complimentaryError,
+            );
+          } else {
+            complimentaryValid = Boolean(complimentary);
+          }
         }
 
         if (cancelled) return;
 
         setIsPrivileged(privileged);
+        setHasComplimentaryAccess(complimentaryValid);
 
         const allowed =
           !isPaidFilm ||
           privileged ||
+          complimentaryValid ||
           (isSubscriptionFilm && subscriptionValid) ||
           ((accessType === "paid" || accessType === "rent") &&
             purchaseValid);
@@ -452,6 +478,42 @@ export default function FilmDetailsPage({
       );
     } finally {
       setBuyingFilm(false);
+    }
+  }
+
+  async function handleBuyWithWallet() {
+    if (buyingWithWallet) return;
+
+    setMessage("");
+    setBuyingWithWallet(true);
+
+    try {
+      const { data, error } = await supabase.rpc(
+        "purchase_with_wallet",
+        {
+          p_item_type: "film",
+          p_item_id: film.id,
+        },
+      );
+
+      if (error) throw error;
+
+      window.dispatchEvent(new Event("wallet-updated"));
+
+      setHasAccess(true);
+      setMessage(
+        isRentalFilm
+          ? "Rental successful. You can now watch this film."
+          : "Purchase successful. You can now watch this film.",
+      );
+    } catch (error) {
+      console.error("Wallet purchase failed:", error);
+
+      setMessage(
+        error?.message || "Could not complete the wallet purchase.",
+      );
+    } finally {
+      setBuyingWithWallet(false);
     }
   }
 
@@ -633,6 +695,19 @@ export default function FilmDetailsPage({
               : "Payment temporarily unavailable"}
         </button>
 
+        <button
+          className="media-watch-button"
+          type="button"
+          onClick={handleBuyWithWallet}
+          disabled={buyingWithWallet}
+        >
+          {buyingWithWallet
+            ? "Processing wallet payment…"
+            : isRentalFilm
+              ? `Rent with wallet — ${formatCurrency(film.price_cents)}`
+              : `Buy with wallet — ${formatCurrency(film.price_cents)}`}
+        </button>
+
         {!hasCheckoutPrice && (
           <p className="media-access-message" role="status">
             Checkout is not ready for this film yet. Please try
@@ -766,7 +841,9 @@ export default function FilmDetailsPage({
                   ? "This film is free to watch."
                   : isPrivileged
                     ? "You have owner or administrator access."
-                    : "Your account has access to this film."}
+                    : hasComplimentaryAccess
+                      ? "Complimentary access is active."
+                      : "Your account has access to this film."}
               </p>
 
               {!videoUrl && (

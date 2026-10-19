@@ -3558,3 +3558,58 @@ button {
   opacity: 0.65;
   cursor: not-allowed;
 }
+.owner-user-email {
+  color: #64748b;
+  font-size: 0.9rem;
+  margin-top: -0.35rem;
+}
+.media-film-open-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.media-film-open-button:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: -2px;
+}
+
+.media-film-open-button:disabled {
+  cursor: wait;
+}
+
+.media-film-purchase-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 18px 18px;
+}
+
+.media-film-purchase-actions .media-watch-button {
+  width: 100%;
+  margin: 0;
+}
+
+.media-film-purchase-actions .media-access-message {
+  margin: 0;
+  font-size: 0.875rem;
+}
+.wallet-balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+}

@@ -38,6 +38,15 @@ export default function ShopSection({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [buyingWithWallet, setBuyingWithWallet] = useState(null);
+
+  useEffect(() => {
+    try {
+      initializePaddle();
+    } catch (paddleError) {
+      console.error("Paddle could not initialize:", paddleError);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -311,16 +320,52 @@ export default function ShopSection({
         customData: {
           user_id: user.id,
           product_id: product.id,
-          product_type: "product",
-          title: product.title,
-          email: user.email,
+          payment_type: "product",
         },
       });
     } catch (paymentError) {
-      console.error("Shop checkout error:", paymentError);
       setError(paymentError?.message || "Could not open checkout.");
     } finally {
       setActionProductId(null);
+    }
+  }
+
+  async function handleBuyWithWallet(product) {
+    if (buyingWithWallet) return;
+
+    setBuyingWithWallet(product.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const user = await getCurrentUser();
+
+      const { data, error } = await supabase.rpc(
+        "purchase_with_wallet",
+        {
+          p_item_type: "product",
+          p_item_id: product.id,
+        },
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      window.dispatchEvent(new Event("wallet-updated"));
+
+      setMessage(
+        `${product.title} was purchased with your wallet. New balance: ${formatPrice(
+          data?.wallet_balance_cents || 0,
+        )}.`,
+      );
+    } catch (walletError) {
+      setError(
+        walletError?.message ||
+          "Could not complete the wallet purchase.",
+      );
+    } finally {
+      setBuyingWithWallet(null);
     }
   }
 
@@ -408,6 +453,7 @@ export default function ShopSection({
           const imageUrl = getProductImageUrl(product);
           const isFavorite = favoriteIds.has(product.id);
           const isBusy = actionProductId === product.id;
+          const isWalletBusy = buyingWithWallet === product.id;
 
           return (
             <article className="shop-card" key={product.id}>
@@ -480,6 +526,17 @@ export default function ShopSection({
                     : product.paddle_price_id
                       ? "Buy now"
                       : "Payment not configured"}
+                </button>
+
+                <button
+                  className="buy-now-button"
+                  type="button"
+                  onClick={() => handleBuyWithWallet(product)}
+                  disabled={isWalletBusy}
+                >
+                  {isWalletBusy
+                    ? "Processing wallet payment…"
+                    : `Buy with wallet — ${formatPrice(product.price_cents)}`}
                 </button>
               </div>
             </article>

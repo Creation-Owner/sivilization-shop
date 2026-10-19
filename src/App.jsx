@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
 
-import PasswordRecoveryPage from "./components/PasswordRecoveryPage";
+import PublicSite from "./components/PublicSite";
 import HomeSection from "./components/HomeSection";
 import MediaSection from "./components/MediaSection";
 import FilmDetailsPage from "./components/FilmDetailsPage";
@@ -11,6 +11,8 @@ import ShopSection from "./components/ShopSection";
 import CartSection from "./components/CartSection";
 import LibrarySection from "./components/LibrarySection";
 import ProfileSection from "./components/ProfileSection";
+import WalletSection from "./components/WalletSection";
+import SettingsSection from "./components/SettingsSection";
 import AdminContentPage from "./components/AdminContentPage";
 import OwnerUsersPage from "./components/OwnerUsersPage";
 import ProductStudioPage from "./components/ProductStudioPage";
@@ -23,9 +25,34 @@ const NAV_ITEMS = [
   { id: "Games", label: "Games" },
   { id: "Shop", label: "Shop" },
   { id: "Subscriptions", label: "Subscriptions" },
+  { id: "Wallet", label: "Wallet" },
   { id: "Cart", label: "Cart" },
   { id: "Library", label: "Library" },
 ];
+
+const OWNER_NAV_ITEMS = [
+  { id: "Owner", label: "Owner" },
+  { id: "ProductStudio", label: "Product Studio" },
+  { id: "SubscriptionStudio", label: "Subscription Studio" },
+];
+
+function formatCurrency(cents) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
+
+function AccessRequired({ title, children }) {
+  return (
+    <section className="content-section">
+      <div className="empty-state">
+        <h2>{title}</h2>
+        <p>{children}</p>
+      </div>
+    </section>
+  );
+}
 
 function AuthPage() {
   const [mode, setMode] = useState("login");
@@ -42,6 +69,9 @@ function AuthPage() {
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+    if (busy) return;
+
     setBusy(true);
     showMessage("");
 
@@ -64,15 +94,19 @@ function AuthPage() {
           "success",
         );
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
+        const { error } =
+          await supabase.auth.signInWithPassword({
+            email: normalizedEmail,
+            password,
+          });
 
         if (error) throw error;
       }
     } catch (error) {
-      showMessage(error?.message || "Authentication failed.", "error");
+      showMessage(
+        error?.message || "Authentication failed.",
+        "error",
+      );
     } finally {
       setBusy(false);
     }
@@ -90,15 +124,16 @@ function AuthPage() {
     showMessage("");
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(
-        normalizedEmail,
-        { redirectTo: window.location.origin },
-      );
+      const { error } =
+        await supabase.auth.resetPasswordForEmail(
+          normalizedEmail,
+          { redirectTo: window.location.origin },
+        );
 
       if (error) throw error;
 
       showMessage(
-        "If an account exists for that address, a password reset email has been sent.",
+        "If an account exists for that address, a password-reset email has been sent.",
         "success",
       );
     } catch (error) {
@@ -121,7 +156,9 @@ function AuthPage() {
         <p className="eyebrow">Sivilization</p>
 
         <h1 id="auth-title">
-          {mode === "signup" ? "Create your account" : "Welcome back"}
+          {mode === "signup"
+            ? "Create your account"
+            : "Welcome back"}
         </h1>
 
         <p className="auth-subtitle">
@@ -147,7 +184,9 @@ function AuthPage() {
             id="auth-password"
             type="password"
             autoComplete={
-              mode === "signup" ? "new-password" : "current-password"
+              mode === "signup"
+                ? "new-password"
+                : "current-password"
             }
             minLength={8}
             value={password}
@@ -216,18 +255,26 @@ function AppShell({ user }) {
   const [activeSection, setActiveSection] = useState("Home");
   const [search, setSearch] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+
   const [isAdmin, setIsAdmin] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
   const [roleError, setRoleError] = useState("");
-  const [cartCount, setCartCount] = useState(0);
+  const [sessionError, setSessionError] = useState("");
 
-  // This parent state determines whether catalogue or film page is rendered.
+  const [cartCount, setCartCount] = useState(0);
+  const [cartVersion, setCartVersion] = useState(0);
+
+  const [walletBalance, setWalletBalance] = useState(null);
+  const [walletError, setWalletError] = useState("");
+
   const [selectedFilm, setSelectedFilm] = useState(null);
   const [allMediaFilms, setAllMediaFilms] = useState([]);
 
   const email = user.email || "";
-  const username = email ? email.split("@")[0] : "Sivilization user";
+  const username = email
+    ? email.split("@")[0]
+    : "Sivilization user";
 
   useEffect(() => {
     let alive = true;
@@ -236,24 +283,29 @@ function AppShell({ user }) {
       setRoleLoading(true);
       setRoleError("");
 
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("is_admin,is_owner")
-        .eq("id", user.id)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("is_admin,is_owner")
+          .eq("id", user.id)
+          .maybeSingle();
 
-      if (!alive) return;
+        if (error) throw error;
+        if (!alive) return;
 
-      if (error) {
-        setIsAdmin(false);
-        setIsOwner(false);
-        setRoleError(error.message);
-      } else {
         setIsAdmin(data?.is_admin === true);
         setIsOwner(data?.is_owner === true);
-      }
+      } catch (error) {
+        if (!alive) return;
 
-      setRoleLoading(false);
+        setIsAdmin(false);
+        setIsOwner(false);
+        setRoleError(
+          error?.message || "Could not load account role.",
+        );
+      } finally {
+        if (alive) setRoleLoading(false);
+      }
     }
 
     loadRole();
@@ -264,23 +316,85 @@ function AppShell({ user }) {
   }, [user.id]);
 
   useEffect(() => {
+    let cancelled = false;
+    let requestVersion = 0;
+
+    async function loadWalletBalance() {
+      const currentRequest = ++requestVersion;
+
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("wallet_balance_cents")
+          .eq("id", user.id)
+          .single();
+
+        if (error) throw error;
+
+        if (
+          data?.wallet_balance_cents == null ||
+          !Number.isFinite(Number(data.wallet_balance_cents))
+        ) {
+          throw new Error("Wallet balance is unavailable.");
+        }
+
+        if (
+          !cancelled &&
+          currentRequest === requestVersion
+        ) {
+          setWalletBalance(Number(data.wallet_balance_cents));
+          setWalletError("");
+        }
+      } catch (error) {
+        if (
+          !cancelled &&
+          currentRequest === requestVersion
+        ) {
+          setWalletBalance(null);
+          setWalletError(
+            error?.message || "Could not load wallet balance.",
+          );
+        }
+      }
+    }
+
+    loadWalletBalance();
+
+    window.addEventListener("wallet-updated", loadWalletBalance);
+    window.addEventListener("focus", loadWalletBalance);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        "wallet-updated",
+        loadWalletBalance,
+      );
+      window.removeEventListener("focus", loadWalletBalance);
+    };
+  }, [user.id]);
+
+  useEffect(() => {
     let alive = true;
 
     async function loadCartCount() {
-      const { data, error } = await supabase
-        .from("cart_items")
-        .select("quantity")
-        .eq("user_id", user.id);
+      try {
+        const { data, error } = await supabase
+          .from("cart_items")
+          .select("quantity")
+          .eq("user_id", user.id);
 
-      if (!alive) return;
+        if (error) throw error;
+        if (!alive) return;
 
-      if (!error) {
         setCartCount(
           (data || []).reduce(
-            (total, item) => total + (Number(item.quantity) || 0),
+            (total, item) =>
+              total + (Number(item.quantity) || 0),
             0,
           ),
         );
+      } catch (error) {
+        console.error("Could not load cart count:", error);
       }
     }
 
@@ -289,22 +403,37 @@ function AppShell({ user }) {
     return () => {
       alive = false;
     };
-  }, [user.id]);
+  }, [user.id, cartVersion]);
 
   async function handleLogout() {
-    const { error } = await supabase.auth.signOut();
+    setSessionError("");
 
-    if (error) setRoleError(error.message);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (error) {
+      setSessionError(error?.message || "Could not log out.");
+    }
+  }
+
+  function refreshWallet() {
+    window.dispatchEvent(new Event("wallet-updated"));
   }
 
   function navigate(section) {
     setActiveSection(section);
     setProfileOpen(false);
-    setSelectedFilm(null);
+
+    if (section !== "Media") {
+      setSelectedFilm(null);
+    }
 
     if (!["Media", "Games", "Shop", "Library"].includes(section)) {
       setSearch("");
     }
+
+    refreshWallet();
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function handleOpenFilm(film, films = []) {
@@ -314,6 +443,8 @@ function AppShell({ user }) {
     setSelectedFilm(film);
     setActiveSection("Media");
     setProfileOpen(false);
+
+    refreshWallet();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -326,27 +457,23 @@ function AppShell({ user }) {
 
   function handleBackToFilms() {
     setSelectedFilm(null);
+    refreshWallet();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function refreshCartCount() {
-    const { data, error } = await supabase
-      .from("cart_items")
-      .select("quantity")
-      .eq("user_id", user.id);
-
-    if (error) {
-      console.error("Could not refresh cart count:", error);
-      return;
-    }
-
-    setCartCount(
-      (data || []).reduce(
-        (total, item) => total + (Number(item.quantity) || 0),
-        0,
-      ),
-    );
+  function refreshCartCount() {
+    setCartVersion((current) => current + 1);
   }
+
+  const walletLabel = walletError
+    ? "Wallet unavailable"
+    : walletBalance === null
+      ? "Loading wallet…"
+      : `Wallet: ${formatCurrency(walletBalance)}`;
+
+  const showSearch =
+    ["Media", "Games", "Shop", "Library"].includes(activeSection) &&
+    !(activeSection === "Media" && selectedFilm);
 
   return (
     <main className="site-page">
@@ -369,7 +496,9 @@ function AppShell({ user }) {
               key={item.id}
               className={activeSection === item.id ? "active" : ""}
               type="button"
-              aria-current={activeSection === item.id ? "page" : undefined}
+              aria-current={
+                activeSection === item.id ? "page" : undefined
+              }
               onClick={() => navigate(item.id)}
             >
               {item.label}
@@ -388,79 +517,81 @@ function AppShell({ user }) {
                   : "admin-nav-button"
               }
               type="button"
-              aria-current={activeSection === "Admin" ? "page" : undefined}
+              aria-current={
+                activeSection === "Admin" ? "page" : undefined
+              }
               onClick={() => navigate("Admin")}
             >
               Admin
             </button>
           )}
 
-          {!roleLoading && isOwner && (
-            <>
+          {!roleLoading &&
+            isOwner &&
+            OWNER_NAV_ITEMS.map((item) => (
               <button
+                key={item.id}
                 className={
-                  activeSection === "Owner"
-                    ? "active owner-nav-button"
-                    : "owner-nav-button"
-                }
-                type="button"
-                aria-current={activeSection === "Owner" ? "page" : undefined}
-                onClick={() => navigate("Owner")}
-              >
-                Owner
-              </button>
-
-              <button
-                className={
-                  activeSection === "ProductStudio"
+                  activeSection === item.id
                     ? "active owner-nav-button"
                     : "owner-nav-button"
                 }
                 type="button"
                 aria-current={
-                  activeSection === "ProductStudio" ? "page" : undefined
+                  activeSection === item.id ? "page" : undefined
                 }
-                onClick={() => navigate("ProductStudio")}
+                onClick={() => navigate(item.id)}
               >
-                Product Studio
+                {item.label}
               </button>
-
-              <button
-                className={
-                  activeSection === "SubscriptionStudio"
-                    ? "active owner-nav-button"
-                    : "owner-nav-button"
-                }
-                type="button"
-                aria-current={
-                  activeSection === "SubscriptionStudio" ? "page" : undefined
-                }
-                onClick={() => navigate("SubscriptionStudio")}
-              >
-                Subscription Studio
-              </button>
-            </>
-          )}
+            ))}
         </nav>
 
         <div className="top-actions">
-          {["Media", "Games", "Shop", "Library"].includes(activeSection) &&
-            !(activeSection === "Media" && selectedFilm) && (
-              <>
-                <label className="visually-hidden" htmlFor="site-search">
-                  Search catalog
-                </label>
+          {showSearch && (
+            <>
+              <label
+                className="visually-hidden"
+                htmlFor="site-search"
+              >
+                Search catalog
+              </label>
 
-                <input
-                  id="site-search"
-                  className="search-input"
-                  type="search"
-                  placeholder="Search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-              </>
-            )}
+              <input
+                id="site-search"
+                className="search-input"
+                type="search"
+                placeholder="Search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </>
+          )}
+
+          <button
+            className="wallet-balance"
+            type="button"
+            onClick={() => navigate("Wallet")}
+            title="Open your wallet and payment history"
+            aria-label={`${walletLabel}. Open wallet`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "9px 13px",
+              border: "1px solid rgba(148,163,184,.3)",
+              borderRadius: "999px",
+              background: "rgba(15,23,42,.85)",
+              color: "#e2e8f0",
+              fontSize: ".9rem",
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+            }}
+          >
+            <span aria-hidden="true">👛</span>
+            <span role="status">{walletLabel}</span>
+          </button>
 
           <div className="profile-menu">
             <button
@@ -470,13 +601,32 @@ function AppShell({ user }) {
               onClick={() => setProfileOpen((open) => !open)}
             >
               <span>{username}</span>
-              <span aria-hidden="true">{profileOpen ? "▲" : "▼"}</span>
+              <span aria-hidden="true">
+                {profileOpen ? "▲" : "▼"}
+              </span>
             </button>
 
             {profileOpen && (
               <div className="profile-dropdown">
-                <button type="button" onClick={() => navigate("Profile")}>
+                <button
+                  type="button"
+                  onClick={() => navigate("Profile")}
+                >
                   Profile
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate("Wallet")}
+                >
+                  Wallet
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate("Settings")}
+                >
+                  Settings
                 </button>
 
                 <button
@@ -496,6 +646,14 @@ function AppShell({ user }) {
         <div className="content-section">
           <p className="notice error" role="alert">
             Could not read your account role: {roleError}
+          </p>
+        </div>
+      )}
+
+      {sessionError && (
+        <div className="content-section">
+          <p className="notice error" role="alert">
+            {sessionError}
           </p>
         </div>
       )}
@@ -528,7 +686,9 @@ function AppShell({ user }) {
         />
       )}
 
-      {activeSection === "Games" && <GamesSection search={search} />}
+      {activeSection === "Games" && (
+        <GamesSection search={search} />
+      )}
 
       {activeSection === "Shop" && (
         <ShopSection
@@ -538,20 +698,40 @@ function AppShell({ user }) {
         />
       )}
 
-      {activeSection === "Subscriptions" && <SubscriptionsSection />}
+      {activeSection === "Subscriptions" && (
+        <SubscriptionsSection />
+      )}
+
+      {activeSection === "Wallet" && <WalletSection />}
+
+      {activeSection === "Settings" && (
+        <SettingsSection
+          email={email}
+          isAdmin={isAdmin}
+          isOwner={isOwner}
+          onOpenWallet={() => navigate("Wallet")}
+          onOpenSubscriptions={() => navigate("Subscriptions")}
+          handleLogout={handleLogout}
+        />
+      )}
 
       {activeSection === "Cart" && (
         <CartSection onCartChange={refreshCartCount} />
       )}
 
-      {activeSection === "Library" && <LibrarySection search={search} />}
+      {activeSection === "Library" && (
+        <LibrarySection search={search} />
+      )}
 
       {activeSection === "Profile" && (
         <ProfileSection
           email={email}
           isAdmin={isAdmin}
+          isOwner={isOwner}
           handleLogout={handleLogout}
           onOpenSubscriptions={() => navigate("Subscriptions")}
+          onOpenSettings={() => navigate("Settings")}
+          onOpenWallet={() => navigate("Wallet")}
         />
       )}
 
@@ -560,28 +740,30 @@ function AppShell({ user }) {
       )}
 
       {activeSection === "Admin" && !roleLoading && !isAdmin && (
-        <section className="content-section">
-          <div className="empty-state">
-            <h2>Administrator access required</h2>
-            <p>Your account is not authorized to open the admin area.</p>
-          </div>
-        </section>
+        <AccessRequired title="Administrator access required">
+          Your account is not authorized to open the admin area.
+        </AccessRequired>
       )}
 
       {activeSection === "Owner" && isOwner && <OwnerUsersPage />}
 
       {activeSection === "Owner" && !roleLoading && !isOwner && (
-        <section className="content-section">
-          <div className="empty-state">
-            <h2>Owner access required</h2>
-            <p>Only the website owner can manage users and permissions.</p>
-          </div>
-        </section>
+        <AccessRequired title="Owner access required">
+          Only the website owner can manage users and permissions.
+        </AccessRequired>
       )}
 
       {activeSection === "ProductStudio" && isOwner && (
         <ProductStudioPage />
       )}
+
+      {activeSection === "ProductStudio" &&
+        !roleLoading &&
+        !isOwner && (
+          <AccessRequired title="Owner access required">
+            Only the website owner can create paid products.
+          </AccessRequired>
+        )}
 
       {activeSection === "SubscriptionStudio" && isOwner && (
         <SubscriptionStudioPage />
@@ -590,36 +772,26 @@ function AppShell({ user }) {
       {activeSection === "SubscriptionStudio" &&
         !roleLoading &&
         !isOwner && (
-          <section className="content-section">
-            <div className="empty-state">
-              <h2>Owner access required</h2>
-              <p>Only the website owner can manage subscription plans.</p>
-            </div>
-          </section>
+          <AccessRequired title="Owner access required">
+            Only the website owner can manage subscription plans.
+          </AccessRequired>
         )}
-
-      {activeSection === "ProductStudio" && !roleLoading && !isOwner && (
-        <section className="content-section">
-          <div className="empty-state">
-            <h2>Owner access required</h2>
-            <p>Only the website owner can create paid products.</p>
-          </div>
-        </section>
-      )}
 
       <footer className="app-footer">
         <span>© {new Date().getFullYear()} Sivilization</span>
-        <span>Films, games, products, and memberships in one place.</span>
+        <span>
+          Films, games, products, and memberships in one place.
+        </span>
       </footer>
     </main>
   );
 }
 
 export default function App() {
+  const [showLogin, setShowLogin] = useState(false);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [startupError, setStartupError] = useState("");
-  const [recoveryMode, setRecoveryMode] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -645,18 +817,8 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      if (!alive) return;
-
-      setSession(nextSession);
-
-      if (event === "PASSWORD_RECOVERY") {
-        setRecoveryMode(true);
-      }
-
-      if (event === "SIGNED_OUT") {
-        setRecoveryMode(false);
-      }
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (alive) setSession(nextSession);
     });
 
     return () => {
@@ -680,15 +842,17 @@ export default function App() {
     return (
       <main className="auth-page">
         <section className="auth-card">
-          <div className="brand-mark" aria-hidden="true">!</div>
+          <div className="brand-mark" aria-hidden="true">
+            !
+          </div>
 
           <p className="eyebrow">Supabase connection</p>
           <h1>Could not start your session</h1>
           <p className="auth-subtitle">{startupError}</p>
 
           <p className="setup-hint">
-            Check the Supabase URL and publishable/anon key in `.env.local`,
-            then restart Vite.
+            Check the Supabase URL and publishable/anon key in
+            .env.local, then restart Vite.
           </p>
 
           <button
@@ -703,20 +867,40 @@ export default function App() {
     );
   }
 
-  if (session && recoveryMode) {
+  if (session) {
     return (
-      <PasswordRecoveryPage
-        onComplete={() => {
-          setRecoveryMode(false);
-          window.location.replace(window.location.origin);
-        }}
-        onCancel={async () => {
-          await supabase.auth.signOut();
-          setRecoveryMode(false);
-        }}
+      <AppShell
+        key={session.user.id}
+        user={session.user}
       />
     );
   }
 
-  return session ? <AppShell user={session.user} /> : <AuthPage />;
+  if (showLogin) {
+    return (
+      <>
+        <button
+          type="button"
+          className="back-button"
+          onClick={() => setShowLogin(false)}
+          style={{ margin: "20px" }}
+        >
+          ← Back to website
+        </button>
+
+        <AuthPage />
+      </>
+    );
+  }
+
+  return (
+    <PublicSite
+      onLogin={() => setShowLogin(true)}
+      businessName="Sivilization"
+      supportEmail="sivilization.support@gmail.com"
+      termsUrl="/terms.html"
+      privacyUrl="/privacy.html"
+      refundsUrl="/refunds.html"
+    />
+  );
 }
