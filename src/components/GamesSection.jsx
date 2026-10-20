@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { buyItem } from "../paddle";
 
 const CATEGORIES = [
   "All games",
@@ -26,412 +25,325 @@ function formatPrice(cents) {
 function getCoverUrl(path) {
   if (!path) return null;
 
-  const { data } = supabase.storage.from("games").getPublicUrl(path);
-  return data?.publicUrl || null;
-}
-
-function GameCard({
-  game,
-  isPurchased,
-  busy,
-  walletBusy,
-  onBuy,
-  onBuyWithWallet,
-  onPlay,
-}) {
-  const isPaid = game.access_type === "paid";
-  const coverUrl = getCoverUrl(game.cover_path);
-
-  const coverStyle = {
-    "--game-color": "#0f766e",
-    ...(coverUrl
-      ? {
-          backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0.78)), url("${coverUrl}")`,
-          backgroundPosition: "center",
-          backgroundSize: "cover",
-        }
-      : {}),
-  };
-
   return (
-    <article
-      className="game-card database-game-card"
-      style={coverStyle}
-    >
-      <div className="game-cover">
-        <div className="game-cover-overlay">
-          <span className="game-genre">{game.genre || "Game"}</span>
-          <span className="game-platform">{game.platform || "Platform"}</span>
-        </div>
-
-        {!coverUrl && (
-          <div className="game-cover-placeholder" aria-hidden="true">
-            🎮
-          </div>
-        )}
-      </div>
-
-      <div className="game-card-body">
-        <h3>{game.title}</h3>
-
-        <p>
-          {game.platform || "Game"} · Version {game.version || "1.0.0"}
-        </p>
-
-        {game.description && (
-          <p className="game-description">{game.description}</p>
-        )}
-
-        <div className="game-card-footer">
-          <strong>
-            {isPaid
-              ? isPurchased
-                ? "Purchased"
-                : formatPrice(game.price_cents)
-              : "Free"}
-          </strong>
-
-          {isPaid && !isPurchased ? (
-            <div className="game-purchase-actions">
-              <button
-                type="button"
-                onClick={() => onBuy(game)}
-                disabled={busy || walletBusy}
-              >
-                {busy ? "Opening..." : "Buy now"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onBuyWithWallet(game)}
-                disabled={busy || walletBusy}
-              >
-                {walletBusy
-                  ? "Processing..."
-                  : `Buy with wallet — ${formatPrice(game.price_cents)}`}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onPlay(game)}
-              disabled={busy}
-            >
-              {busy
-                ? "Preparing..."
-                : game.delivery_type === "url"
-                  ? "Play now"
-                  : "Download"}
-            </button>
-          )}
-        </div>
-      </div>
-    </article>
+    supabase.storage
+      .from("games")
+      .getPublicUrl(path)
+      .data?.publicUrl || null
   );
 }
 
 export default function GamesSection() {
   const [games, setGames] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState("All games");
-  const [purchasedGameIds, setPurchasedGameIds] = useState([]);
-  const [loadingGames, setLoadingGames] = useState(true);
-  const [gamesError, setGamesError] = useState("");
-  const [busyGameId, setBusyGameId] = useState(null);
-  const [buyingWalletGameId, setBuyingWalletGameId] = useState(null);
+  const [category, setCategory] = useState("All games");
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [privileged, setPrivileged] = useState(false);
 
-  async function loadGamesAndPurchases() {
-    setLoadingGames(true);
-    setGamesError("");
+  async function loadGames() {
+    setLoading(true);
+    setMessage("");
 
     try {
       const {
         data: { user },
-        error: authError,
+        error: userError,
       } = await supabase.auth.getUser();
 
-      if (authError) throw authError;
+      if (userError) throw userError;
+
+      let isAdmin = false;
 
       if (user) {
-        const { data: purchases, error: purchasesError } = await supabase
-          .from("product_purchases")
-          .select("product_id")
-          .eq("user_id", user.id);
+        const {
+          data: profile,
+          error: profileError,
+        } = await supabase
+          .from("profiles")
+          .select("is_admin,is_owner")
+          .eq("id", user.id)
+          .maybeSingle();
 
-        if (purchasesError) {
-          console.error("Could not load game purchases:", purchasesError);
-          throw purchasesError;
-        }
+        if (profileError) throw profileError;
 
-        setPurchasedGameIds(
-          [...new Set((purchases || []).map((purchase) => purchase.product_id))],
-        );
-      } else {
-        setPurchasedGameIds([]);
+        isAdmin =
+          profile?.is_admin === true ||
+          profile?.is_owner === true;
       }
 
-      const { data: databaseGames, error: gamesError } = await supabase
+      setPrivileged(isAdmin);
+
+      const { data, error } = await supabase
         .from("games")
         .select("*")
         .eq("is_published", true)
-        .order("created_at", { ascending: false });
+        .order("created_at", {
+          ascending: false,
+        });
 
-      if (gamesError) throw gamesError;
+      if (error) throw error;
 
-      setGames(databaseGames || []);
+      setGames(data || []);
     } catch (error) {
-      console.error("Could not load games:", error);
-      setGamesError(error?.message || "Could not load games.");
+      setMessage(
+        error.message || "Could not load games.",
+      );
     } finally {
-      setLoadingGames(false);
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadGamesAndPurchases();
+    loadGames();
   }, []);
 
-  const filteredGames = useMemo(() => {
-    if (selectedCategory === "All games") return games;
-    return games.filter((game) => game.genre === selectedCategory);
-  }, [games, selectedCategory]);
+  const filteredGames = useMemo(
+    () =>
+      category === "All games"
+        ? games
+        : games.filter(
+            (game) => game.genre === category,
+          ),
+    [games, category],
+  );
 
-  const featuredGame = games[0] || null;
+  async function handleDownload(game) {
+    if (busyId) return;
 
-  async function handleBuyGame(game) {
-    if (!game.paddle_price_id) {
-      window.alert(
-        "This game has no Paddle price yet. Edit and save it in Game Studio to create one.",
-      );
-      return;
-    }
+    const paid =
+      game.access_type === "paid" ||
+      game.is_paid === true;
 
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error) {
-      window.alert(error.message || "Could not check your sign-in.");
-      return;
-    }
-
-    if (!user) {
-      window.alert("Please sign in before buying a game.");
-      return;
-    }
-
-    setBusyGameId(game.id);
-
-    try {
-      await buyItem({
-        priceId: game.paddle_price_id,
-        customData: {
-          user_id: user.id,
-          product_id: game.id,
-          product_type: "game",
-        },
-      });
-    } catch (checkoutError) {
-      console.error("Could not start Paddle checkout:", checkoutError);
-      window.alert(
-        checkoutError?.message || "Could not open checkout. Please try again.",
-      );
-    } finally {
-      setBusyGameId(null);
-    }
-  }
-
-  async function handleBuyGameWithWallet(game) {
-    if (buyingWalletGameId) return;
-
-    setBuyingWalletGameId(game.id);
-
-    try {
-      const { data, error } = await supabase.rpc(
-        "purchase_with_wallet",
-        {
-          p_item_type: "game",
-          p_item_id: game.id,
-        },
+    if (paid && !privileged) {
+      setMessage(
+        "Paid-game checkout and customer downloads are temporarily disabled while purchase verification is fixed.",
       );
 
-      if (error) {
-        throw error;
-      }
-
-      window.dispatchEvent(new Event("wallet-updated"));
-
-      setPurchasedGameIds((current) => [
-        ...new Set([...current, game.id]),
-      ]);
-
-      window.alert(
-        `${game.title} was purchased with your wallet. New balance: ${formatPrice(
-          data?.wallet_balance_cents || 0,
-        )}.`,
-      );
-    } catch (walletError) {
-      console.error("Could not purchase game with wallet:", walletError);
-
-      window.alert(
-        walletError?.message ||
-          "Could not complete the wallet purchase.",
-      );
-    } finally {
-      setBuyingWalletGameId(null);
-    }
-  }
-
-  async function handlePlayGame(game) {
-    const isPurchased = purchasedGameIds.includes(game.id);
-
-    if (game.access_type === "paid" && !isPurchased) {
-      window.alert("Purchase this game before downloading it.");
       return;
     }
 
     if (game.delivery_type === "url") {
-      if (!game.external_url) {
-        window.alert("This game does not have an external URL.");
-        return;
+      try {
+        const url = new URL(game.external_url);
+
+        if (
+          !["http:", "https:"].includes(url.protocol)
+        ) {
+          throw new Error("Unsupported URL");
+        }
+
+        window.open(
+          url.href,
+          "_blank",
+          "noopener,noreferrer",
+        );
+      } catch {
+        setMessage(
+          "This game has an invalid external URL.",
+        );
       }
 
-      window.open(game.external_url, "_blank", "noopener,noreferrer");
       return;
     }
 
-    setBusyGameId(game.id);
+    setBusyId(game.id);
+    setMessage("");
 
     try {
-      const { data, error } = await supabase.functions.invoke(
-        "get-game-download",
-        { body: { game_id: game.id } },
-      );
+      const { data, error } =
+        await supabase.functions.invoke(
+          "get-game-download",
+          {
+            body: {
+              game_id: game.id,
+            },
+          },
+        );
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      if (!data?.url) throw new Error("No download URL was returned.");
+      if (error) {
+        const detail =
+          typeof error.context?.json === "function"
+            ? await error.context.json().catch(() => null)
+            : null;
 
-      window.open(data.url, "_blank", "noopener,noreferrer");
-    } catch (downloadError) {
-      console.error("Could not prepare game download:", downloadError);
-      window.alert(
-        downloadError?.message || "Could not prepare this game download.",
+        throw new Error(
+          detail?.error || error.message,
+        );
+      }
+
+      if (!data?.url || data.error) {
+        throw new Error(
+          data?.error || "No download URL returned.",
+        );
+      }
+
+      window.location.assign(data.url);
+    } catch (error) {
+      setMessage(
+        error.message || "Could not prepare download.",
       );
     } finally {
-      setBusyGameId(null);
+      setBusyId(null);
     }
-  }
-
-  async function handleFeaturedGame() {
-    if (!featuredGame) return;
-
-    if (
-      featuredGame.access_type === "paid" &&
-      !purchasedGameIds.includes(featuredGame.id)
-    ) {
-      await handleBuyGame(featuredGame);
-      return;
-    }
-
-    await handlePlayGame(featuredGame);
   }
 
   return (
     <section className="section-page games-page">
       <div className="games-hero">
         <div>
-          <p className="eyebrow">DIGITAL ENTERTAINMENT</p>
-
-          <h1>{featuredGame?.title || "Play something unforgettable."}</h1>
-
-          <p>
-            {featuredGame?.description ||
-              "Upload your first game from Game Studio to begin your collection."}
+          <p className="eyebrow">
+            DIGITAL ENTERTAINMENT
           </p>
 
-          {featuredGame && (
-            <button
-              className="primary-action"
-              type="button"
-              onClick={handleFeaturedGame}
-              disabled={busyGameId === featuredGame.id}
-            >
-              {featuredGame.access_type === "paid" &&
-              !purchasedGameIds.includes(featuredGame.id)
-                ? `Buy for ${formatPrice(featuredGame.price_cents)}`
-                : featuredGame.delivery_type === "url"
-                  ? "Play now"
-                  : "Download"}
-            </button>
-          )}
+          <h1>
+            {games[0]?.title ||
+              "Explore the games collection"}
+          </h1>
+
+          <p>
+            {games[0]?.description ||
+              "Download published games from the collection."}
+          </p>
         </div>
       </div>
 
       <div className="section-title-row">
-        <div>
-          <p className="eyebrow">EXPLORE THE COLLECTION</p>
-          <h2>All games</h2>
-        </div>
+        <h2>All games</h2>
 
-        <span className="games-count">
-          {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
+        <span>
+          {filteredGames.length} games
         </span>
       </div>
 
       <div className="category-tabs">
-        {CATEGORIES.map((category) => (
+        {CATEGORIES.map((item) => (
           <button
-            key={category}
-            className={selectedCategory === category ? "selected" : ""}
             type="button"
-            onClick={() => setSelectedCategory(category)}
+            key={item}
+            className={
+              item === category ? "selected" : ""
+            }
+            onClick={() => setCategory(item)}
           >
-            {category}
+            {item}
           </button>
         ))}
       </div>
 
-      {loadingGames && (
-        <p className="media-status">Loading uploaded games...</p>
-      )}
+      <p>
+        Paid-game checkout and customer downloads are
+        temporarily disabled while purchase verification
+        is fixed. Free-game package downloads require sign-in.
+      </p>
 
-      {gamesError && (
-        <p className="media-status media-error">
-          Database games could not be loaded: {gamesError}
+      {loading && <p>Loading games...</p>}
+
+      {message && (
+        <p
+          className="media-status media-error"
+          role="alert"
+        >
+          {message}
         </p>
       )}
 
-      {!loadingGames && !gamesError && filteredGames.length === 0 && (
-        <div className="games-empty">
-          <div className="games-empty-icon">🎮</div>
-          <h2>No games found</h2>
-          <p>No published games were found in this category.</p>
-        </div>
+      {!loading && !filteredGames.length && (
+        <p>No published games found.</p>
       )}
 
       <div className="game-grid">
-        {filteredGames.map((game) => (
-          <GameCard
-            key={game.id}
-            game={game}
-            isPurchased={purchasedGameIds.includes(game.id)}
-            busy={busyGameId === game.id}
-            walletBusy={buyingWalletGameId === game.id}
-            onBuy={handleBuyGame}
-            onBuyWithWallet={handleBuyGameWithWallet}
-            onPlay={handlePlayGame}
-          />
-        ))}
+        {filteredGames.map((game) => {
+          const cover = getCoverUrl(game.cover_path);
+
+          const paid =
+            game.access_type === "paid" ||
+            game.is_paid === true;
+
+          return (
+            <article
+              className="game-card database-game-card"
+              key={game.id}
+              style={{
+                "--game-color": "#0f766e",
+              }}
+            >
+              <div
+                className="game-cover"
+                style={
+                  cover
+                    ? {
+                        backgroundImage: `url("${cover}")`,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
+                      }
+                    : undefined
+                }
+              >
+                <div className="game-cover-overlay">
+                  <span>
+                    {game.genre || "Game"}
+                  </span>
+
+                  <span>
+                    {game.platform}
+                  </span>
+                </div>
+              </div>
+
+              <div className="game-card-body">
+                <h3>{game.title}</h3>
+
+                <p>
+                  {game.platform} - Version{" "}
+                  {game.version}
+                </p>
+
+                <p className="game-description">
+                  {game.description}
+                </p>
+
+                <div className="game-card-footer">
+                  <strong>
+                    {paid
+                      ? formatPrice(game.price_cents)
+                      : "Free"}
+                  </strong>
+
+                  <button
+                    type="button"
+                    disabled={
+                      Boolean(busyId) ||
+                      (paid && !privileged)
+                    }
+                    onClick={() =>
+                      handleDownload(game)
+                    }
+                  >
+                    {busyId === game.id
+                      ? "Preparing..."
+                      : paid && !privileged
+                        ? "Paid access pending"
+                        : game.delivery_type === "url"
+                          ? "Play now"
+                          : paid && privileged
+                            ? "Test download (admin)"
+                            : "Download"}
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
       </div>
 
       <button
-        className="game-refresh-button"
         type="button"
-        onClick={loadGamesAndPurchases}
-        disabled={loadingGames}
+        className="game-refresh-button"
+        disabled={loading || Boolean(busyId)}
+        onClick={loadGames}
       >
-        {loadingGames ? "Refreshing..." : "Refresh games and purchases"}
+        Refresh games
       </button>
     </section>
   );
