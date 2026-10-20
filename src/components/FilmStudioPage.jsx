@@ -141,9 +141,7 @@ export default function FilmStudioPage({ onBack }) {
   const saveLock = useRef(false);
   const originalFilm = useRef(null);
 
-  const willUseR2 =
-    Boolean(videoFile) ||
-    form.videoStorageProvider === "r2";
+
 
   function show(text, type = "info") {
     setMessage(text);
@@ -450,10 +448,9 @@ export default function FilmStudioPage({ onBack }) {
         poster_path: posterPath,
 
         // Keep R2 films as drafts until playback is connected.
-        is_published:
-          provider === "r2" || chargeable
-            ? false
-            : form.isPublished,
+        is_published: chargeable
+          ? false
+          : form.isPublished,
 
         updated_at: new Date().toISOString(),
       };
@@ -504,7 +501,6 @@ export default function FilmStudioPage({ onBack }) {
       }
 
       if (
-        provider !== "r2" &&
         chargeable &&
         form.isPublished
       ) {
@@ -536,7 +532,7 @@ export default function FilmStudioPage({ onBack }) {
             : " as a draft"
         }.` +
           (provider === "r2"
-            ? " Video is in Cloudflare R2. Publication is blocked until R2 playback is connected."
+            ? " Video is in Cloudflare R2. Private R2 playback is enabled."
             : "") +
           (chargeable
             ? " Paddle checkout price is ready."
@@ -586,14 +582,7 @@ export default function FilmStudioPage({ onBack }) {
     try {
       await requireAdmin();
 
-      if (
-        !film.is_published &&
-        film.video_storage_provider === "r2"
-      ) {
-        throw new Error(
-          "R2 playback is not connected yet. Keep this film as a draft.",
-        );
-      }
+
 
       if (
         !film.is_published &&
@@ -1051,25 +1040,19 @@ export default function FilmStudioPage({ onBack }) {
           <label className="publish-toggle">
             <input
               type="checkbox"
-              checked={
-                !willUseR2 &&
-                form.isPublished
-              }
+              checked={form.isPublished}
               onChange={(event) =>
                 update(
                   "isPublished",
                   event.target.checked,
                 )
               }
-              disabled={
-                saving || willUseR2
-              }
+              disabled={saving}
             />
 
             <span>
-              {willUseR2
-                ? "R2 films stay as drafts until playback is connected"
-                : "Publish after saving and completing checkout setup"}
+              Publish after saving and completing
+              checkout setup
             </span>
           </label>
 
@@ -1219,9 +1202,8 @@ export default function FilmStudioPage({ onBack }) {
 
                     {r2 && (
                       <p>
-                        R2 playback and
-                        deletion are not
-                        connected yet.
+                        Private R2 playback enabled.
+                        R2 deletion is not connected yet.
                       </p>
                     )}
 
@@ -1253,10 +1235,7 @@ export default function FilmStudioPage({ onBack }) {
                       <button
                         type="button"
                         disabled={
-                          saving ||
-                          Boolean(busyId) ||
-                          (r2 &&
-                            !film.is_published)
+                          saving || Boolean(busyId)
                         }
                         onClick={() =>
                           togglePublished(film)
@@ -1264,9 +1243,7 @@ export default function FilmStudioPage({ onBack }) {
                       >
                         {film.is_published
                           ? "Unpublish"
-                          : r2
-                            ? "Playback setup pending"
-                            : "Publish"}
+                          : "Publish"}
                       </button>
 
                       <button
