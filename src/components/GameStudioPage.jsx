@@ -1154,6 +1154,18 @@ export default function GameStudioPage({ onBack }) {
                     )}
 
                     <div className="game-manager-actions">
+                      {import.meta.env.VITE_PADDLE_ENVIRONMENT === "sandbox" &&
+                      game.access_type === "paid" && (
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => testSandboxPurchase(game)}
+                        >
+                          {busyId === game.id
+                            ? "Preparing sandbox checkout..."
+                            : "Test sandbox purchase"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={disabled}
