@@ -3613,3 +3613,38 @@ button {
   font-weight: 600;
   white-space: nowrap;
 }
+.games-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.games-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.games-filter-field span {
+  font-size: .85rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.games-filter-field input,
+.games-filter-field select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, .3);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, .85);
+  color: #e2e8f0;
+  font: inherit;
+}
+
+.games-filter-field input:focus,
+.games-filter-field select:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
