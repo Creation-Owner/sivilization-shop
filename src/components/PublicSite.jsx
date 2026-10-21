@@ -40,6 +40,9 @@ function CatalogSection({
   loading,
   onLogin,
 }) {
+  const safeItems = Array.isArray(items) ? items : [];
+
+
   return (
     <section id={id} className="public-section">
       <div className="public-section-heading">
@@ -58,13 +61,13 @@ function CatalogSection({
       )}
 
 
-      {!loading && !error && items.length === 0 && (
+      {!loading && !error && safeItems.length === 0 && (
         <p>No published items are currently listed.</p>
       )}
 
 
       <div className="public-grid">
-        {items.map((item) => (
+        {safeItems.map((item) => (
           <article className="public-card" key={item.id}>
             <p className="public-category">
               {item.category ||
@@ -112,7 +115,7 @@ export default function PublicSite({
   refundsUrl = "",
 }) {
   const [games, setGames] = useState([]);
-  const [products, setProducts] = [];
+  const [products, setProducts] = useState([]);
 
 
   const [loading, setLoading] = useState(true);
@@ -160,6 +163,8 @@ export default function PublicSite({
         setGames(
           gameResult.error ? [] : gameResult.data || [],
         );
+
+
         setProducts(
           productResult.error ? [] : productResult.data || [],
         );
