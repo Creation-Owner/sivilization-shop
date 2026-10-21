@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { uploadGameToR2 } from "../r2GameUpload";
+import { buySandboxGame } from "../sandboxGameCheckout";
 
 const EMPTY_FORM = {
   id: null,
@@ -129,6 +130,32 @@ export default function GameStudioPage({ onBack }) {
       ...current,
       [field]: value,
     }));
+  }
+  
+  async function testSandboxPurchase(game) {
+    if (operationLock.current) return;
+
+    operationLock.current = true;
+    setBusyId(game.id);
+
+    try {
+      await requireAdmin();
+
+      await buySandboxGame(game.id);
+
+      showMessage(
+        "Sandbox Checkout opened. Complete the test payment, then check Paddle notifications and the purchase table.",
+        "info",
+      );
+    } catch (error) {
+      showMessage(
+        error.message || "Could not open sandbox checkout.",
+        "error",
+      );
+    } finally {
+      operationLock.current = false;
+      setBusyId(null);
+    }
   }
 
   async function requireAdmin() {
@@ -1134,6 +1161,17 @@ export default function GameStudioPage({ onBack }) {
                       >
                         Edit
                       </button>
+
+                      {import.meta.env.VITE_PADDLE_ENVIRONMENT === "sandbox" &&
+                      game.access_type === "paid" && (
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => testSandboxPurchase(game)}
+                        >
+                          Test sandbox purchase
+                        </button>
+                      )}
 
                       <button
                         type="button"
