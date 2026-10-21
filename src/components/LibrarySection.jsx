@@ -1,57 +1,70 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-function getPosterUrl(film) {
-  if (film.poster_url) return film.poster_url;
-  if (!film.poster_path) return "";
-
-  const { data } = supabase.storage
-    .from("film-posters")
-    .getPublicUrl(film.poster_path);
-
-  return data?.publicUrl || "";
-}
 
 function getProductImageUrl(product) {
   if (product.image_url) return product.image_url;
   if (!product.image_path) return "";
 
+
   const { data } = supabase.storage
     .from("product-images")
     .getPublicUrl(product.image_path);
 
+
   return data?.publicUrl || "";
 }
 
+
+function getGameCoverUrl(game) {
+  if (!game.cover_path) return "";
+
+
+  const { data } = supabase.storage
+    .from("games")
+    .getPublicUrl(game.cover_path);
+
+
+  return data?.publicUrl || "";
+}
+
+
 function formatPrice(cents) {
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
   }).format((Number(cents) || 0) / 100);
 }
 
+
 export default function LibrarySection({ search = "" }) {
-  const [activeTab, setActiveTab] = useState("products");
-  const [savedFilms, setSavedFilms] = useState([]);
+  const [activeTab, setActiveTab] = useState("games");
+  const [ownedGames, setOwnedGames] = useState([]);
   const [purchasedProducts, setPurchasedProducts] = useState([]);
-  const [purchasedFilms, setPurchasedFilms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [busyId, setBusyId] = useState(null);
+
 
   useEffect(() => {
     let alive = true;
 
+
     async function loadLibrary() {
       setLoading(true);
       setError("");
+      setNotice("");
+
 
       const {
         data: { user },
         error: authError,
       } = await supabase.auth.getUser();
 
+
       if (!alive) return;
+
 
       if (authError || !user) {
         setError("Please sign in to view your library.");
@@ -59,26 +72,33 @@ export default function LibrarySection({ search = "" }) {
         return;
       }
 
+
       try {
-        const [savedRes, productsRes, filmsRes] = await Promise.all([
+        const [gamesRes, productsRes] = await Promise.all([
           supabase
-            .from("saved_films")
+            .from("sandbox_game_purchases")
             .select(`
-              created_at,
-              films (
+              id,
+              purchased_at,
+              status,
+              game:games (
                 id,
                 title,
                 description,
                 genre,
-                release_year,
-                duration,
-                poster_url,
-                poster_path,
-                access_type
+                platform,
+                version,
+                access_type,
+                price_cents,
+                cover_path,
+                delivery_type,
+                external_url
               )
             `)
             .eq("user_id", user.id)
-            .order("created_at", { ascending: false }),
+            .eq("status", "active")
+            .order("purchased_at", { ascending: false }),
+
 
           supabase
             .from("product_purchases")
@@ -97,50 +117,32 @@ export default function LibrarySection({ search = "" }) {
             `)
             .eq("user_id", user.id)
             .order("created_at", { ascending: false }),
-
-          supabase
-            .from("purchases")
-            .select(`
-              id,
-              purchase_type,
-              price_cents,
-              purchased_at,
-              film:films (
-                id,
-                title,
-                description,
-                genre,
-                release_year,
-                duration,
-                poster_url,
-                poster_path,
-                access_type
-              )
-            `)
-            .eq("user_id", user.id)
-            .order("purchased_at", { ascending: false }),
         ]);
+
 
         if (!alive) return;
 
-        if (savedRes.error) {
-          console.error("Saved films error:", savedRes.error);
+
+        if (gamesRes.error) {
+          console.error("Owned games error:", gamesRes.error);
         }
+
+
         if (productsRes.error) {
           console.error("Products error:", productsRes.error);
         }
-        if (filmsRes.error) {
-          console.error("Film purchases error:", filmsRes.error);
-        }
 
-        setSavedFilms(
-          (savedRes.data || [])
-            .filter((row) => row.films)
+
+        setOwnedGames(
+          (gamesRes.data || [])
+            .filter((row) => row.game)
             .map((row) => ({
-              ...row.films,
-              saved_at: row.created_at,
+              ...row.game,
+              purchase_id: row.id,
+              purchased_at: row.purchased_at,
             }))
         );
+
 
         setPurchasedProducts(
           (productsRes.data || [])
@@ -149,17 +151,6 @@ export default function LibrarySection({ search = "" }) {
               ...row.product,
               purchase_id: row.id,
               purchased_at: row.created_at,
-            }))
-        );
-
-        setPurchasedFilms(
-          (filmsRes.data || [])
-            .filter((row) => row.film)
-            .map((row) => ({
-              ...row.film,
-              purchase_id: row.id,
-              purchase_type: row.purchase_type,
-              purchased_at: row.purchased_at,
             }))
         );
       } catch (err) {
@@ -173,16 +164,44 @@ export default function LibrarySection({ search = "" }) {
       }
     }
 
+
     loadLibrary();
+
 
     return () => {
       alive = false;
     };
   }, []);
 
+
+  const filteredGames = useMemo(() => {
+    const term = search.trim().toLowerCase();
+
+
+    if (!term) return ownedGames;
+
+
+    return ownedGames.filter((game) =>
+      [
+        game.title,
+        game.description,
+        game.genre,
+        game.platform,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [ownedGames, search]);
+
+
   const filteredProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
+
+
     if (!term) return purchasedProducts;
+
 
     return purchasedProducts.filter((product) =>
       [product.title, product.description, product.category]
@@ -193,31 +212,78 @@ export default function LibrarySection({ search = "" }) {
     );
   }, [purchasedProducts, search]);
 
-  const filteredPurchasedFilms = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return purchasedFilms;
 
-    return purchasedFilms.filter((film) =>
-      [film.title, film.description, film.genre]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(term)
-    );
-  }, [purchasedFilms, search]);
+  async function handleDownload(game) {
+    if (busyId) return;
 
-  const filteredSavedFilms = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return savedFilms;
 
-    return savedFilms.filter((film) =>
-      [film.title, film.description, film.genre]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(term)
-    );
-  }, [savedFilms, search]);
+    setBusyId(game.id);
+    setError("");
+    setNotice("");
+
+
+    try {
+      if (game.delivery_type === "url") {
+        const url = new URL(game.external_url);
+
+
+        if (!["http:", "https:"].includes(url.protocol)) {
+          throw new Error("This game has an invalid external URL.");
+        }
+
+
+        window.open(
+          url.href,
+          "_blank",
+          "noopener,noreferrer",
+        );
+
+
+        return;
+      }
+
+
+      const { data, error } = await supabase.functions.invoke(
+        "get-game-download",
+        {
+          body: {
+            game_id: game.id,
+          },
+        },
+      );
+
+
+      if (error) {
+        const detail =
+          typeof error.context?.json === "function"
+            ? await error.context.json().catch(() => null)
+            : null;
+
+
+        throw new Error(
+          detail?.error || error.message,
+        );
+      }
+
+
+      if (!data?.url || data.error) {
+        throw new Error(
+          data?.error || "No download URL returned.",
+        );
+      }
+
+
+      setNotice("Your download is starting.");
+      window.location.assign(data.url);
+    } catch (err) {
+      setError(
+        err?.message || "Could not prepare download.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
 
   return (
     <section className="content-section">
@@ -225,9 +291,10 @@ export default function LibrarySection({ search = "" }) {
         <p className="eyebrow">Your collection</p>
         <h1>My library</h1>
         <p>
-          Browse your purchased products, purchased films, and saved titles.
+          Access your owned games and purchased products.
         </p>
       </header>
+
 
       {notice && (
         <p className="notice" role="status">
@@ -235,11 +302,13 @@ export default function LibrarySection({ search = "" }) {
         </p>
       )}
 
+
       {loading && (
         <p className="status-line" role="status">
           Loading your library…
         </p>
       )}
+
 
       {error && (
         <p className="notice error" role="alert">
@@ -247,7 +316,20 @@ export default function LibrarySection({ search = "" }) {
         </p>
       )}
 
-      <div className="media-categories" style={{ marginBottom: "24px" }}>
+
+      <div
+        className="media-categories"
+        style={{ marginBottom: "24px" }}
+      >
+        <button
+          type="button"
+          className={activeTab === "games" ? "selected" : ""}
+          onClick={() => setActiveTab("games")}
+        >
+          Owned Games ({ownedGames.length})
+        </button>
+
+
         <button
           type="button"
           className={activeTab === "products" ? "selected" : ""}
@@ -255,35 +337,115 @@ export default function LibrarySection({ search = "" }) {
         >
           Purchased Products ({purchasedProducts.length})
         </button>
-
-        <button
-          type="button"
-          className={activeTab === "films" ? "selected" : ""}
-          onClick={() => setActiveTab("films")}
-        >
-          Purchased Films ({purchasedFilms.length})
-        </button>
-
-        <button
-          type="button"
-          className={activeTab === "saved" ? "selected" : ""}
-          onClick={() => setActiveTab("saved")}
-        >
-          Saved Films ({savedFilms.length})
-        </button>
       </div>
+
+
+      {activeTab === "games" && (
+        <>
+          {filteredGames.length === 0 ? (
+            <div className="empty-state">
+              <h2>No owned games yet</h2>
+              <p>
+                Games you purchase will appear here after payment
+                is confirmed.
+              </p>
+            </div>
+          ) : (
+            <div className="catalog-grid">
+              {filteredGames.map((game) => {
+                const cover = getGameCoverUrl(game);
+
+
+                return (
+                  <article
+                    className="catalog-card"
+                    key={game.purchase_id || game.id}
+                  >
+                    <div className="catalog-art">
+                      {cover ? (
+                        <img
+                          src={cover}
+                          alt={game.title}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span aria-hidden="true">🎮</span>
+                      )}
+                    </div>
+
+
+                    <div className="catalog-card-body">
+                      <div className="card-meta">
+                        <span>
+                          {game.genre || "Game"}
+                        </span>
+
+
+                        <span>
+                          {game.access_type === "paid"
+                            ? formatPrice(game.price_cents)
+                            : "Free"}
+                        </span>
+                      </div>
+
+
+                      <h2>{game.title}</h2>
+
+
+                      <p>
+                        {game.platform} · Version{" "}
+                        {game.version}
+                      </p>
+
+
+                      <p>
+                        {game.description ||
+                          "Your purchased game is ready."}
+                      </p>
+
+
+                      <span className="access-label">
+                        ✓ Owned
+                      </span>
+
+
+                      <button
+                        type="button"
+                        className="public-button"
+                        disabled={Boolean(busyId)}
+                        onClick={() => handleDownload(game)}
+                      >
+                        {busyId === game.id
+                          ? "Preparing..."
+                          : game.delivery_type === "url"
+                            ? "Play now"
+                            : "Download"}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
 
       {activeTab === "products" && (
         <>
           {filteredProducts.length === 0 ? (
             <div className="empty-state">
               <h2>No purchased products yet</h2>
-              <p>Items you buy from the Shop will appear here after checkout.</p>
+              <p>
+                Items you buy from the Shop will appear here after
+                checkout.
+              </p>
             </div>
           ) : (
             <div className="catalog-grid">
               {filteredProducts.map((product) => {
                 const image = getProductImageUrl(product);
+
 
                 return (
                   <article
@@ -302,109 +464,32 @@ export default function LibrarySection({ search = "" }) {
                       )}
                     </div>
 
+
                     <div className="catalog-card-body">
                       <div className="card-meta">
-                        <span>{product.category || "Product"}</span>
-                        <span>{formatPrice(product.price_cents)}</span>
+                        <span>
+                          {product.category || "Product"}
+                        </span>
+
+
+                        <span>
+                          {formatPrice(product.price_cents)}
+                        </span>
                       </div>
+
+
                       <h2>{product.title}</h2>
+
+
                       <p>
-                        {product.description || "An exclusive Sivilization item."}
+                        {product.description ||
+                          "An exclusive Sivilization item."}
                       </p>
-                      <span className="access-label">✓ Purchased</span>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
 
-      {activeTab === "films" && (
-        <>
-          {filteredPurchasedFilms.length === 0 ? (
-            <div className="empty-state">
-              <h2>No purchased films yet</h2>
-              <p>Paid films unlocked through checkout will appear here.</p>
-            </div>
-          ) : (
-            <div className="catalog-grid">
-              {filteredPurchasedFilms.map((film) => {
-                const poster = getPosterUrl(film);
 
-                return (
-                  <article
-                    className="catalog-card"
-                    key={film.purchase_id || film.id}
-                  >
-                    <div className="catalog-art">
-                      {poster ? (
-                        <img
-                          src={poster}
-                          alt={film.title}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span aria-hidden="true">🎬</span>
-                      )}
-                    </div>
-
-                    <div className="catalog-card-body">
-                      <div className="card-meta">
-                        <span>{film.genre || "Film"}</span>
-                        <span>{film.release_year || ""}</span>
-                      </div>
-                      <h2>{film.title}</h2>
-                      <p>{film.description || ""}</p>
                       <span className="access-label">
-                        ✓ Purchased Access
+                        ✓ Purchased
                       </span>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-
-      {activeTab === "saved" && (
-        <>
-          {filteredSavedFilms.length === 0 ? (
-            <div className="empty-state">
-              <h2>No saved films</h2>
-              <p>
-                Save titles from the Media section to bookmark them here.
-              </p>
-            </div>
-          ) : (
-            <div className="catalog-grid">
-              {filteredSavedFilms.map((film) => {
-                const poster = getPosterUrl(film);
-
-                return (
-                  <article className="catalog-card" key={film.id}>
-                    <div className="catalog-art">
-                      {poster ? (
-                        <img
-                          src={poster}
-                          alt={film.title}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span aria-hidden="true">🎬</span>
-                      )}
-                    </div>
-
-                    <div className="catalog-card-body">
-                      <div className="card-meta">
-                        <span>{film.genre || "Film"}</span>
-                        <span>{film.release_year || ""}</span>
-                      </div>
-                      <h2>{film.title}</h2>
-                      <p>{film.description || ""}</p>
-                      <span className="access-label">Saved</span>
                     </div>
                   </article>
                 );
