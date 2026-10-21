@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 
+
 function formatPrice(cents) {
   const value = Number(cents);
+
 
   if (!Number.isFinite(value) || value <= 0) {
     return "Price unavailable";
   }
+
 
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -14,19 +17,19 @@ function formatPrice(cents) {
   }).format(value / 100);
 }
 
+
 function getPriceLabel(item) {
   if (item.access_type === "free") return "Free";
+
 
   if (item.access_type === "subscription") {
     return "Membership required";
   }
 
-  const price = formatPrice(item.price_cents);
 
-  return item.access_type === "rent"
-    ? `${price} · Rental`
-    : price;
+  return formatPrice(item.price_cents);
 }
+
 
 function CatalogSection({
   id,
@@ -44,7 +47,9 @@ function CatalogSection({
         <p>{description}</p>
       </div>
 
+
       {loading && <p role="status">Loading catalogue…</p>}
+
 
       {error && (
         <p className="notice error" role="alert">
@@ -52,9 +57,11 @@ function CatalogSection({
         </p>
       )}
 
+
       {!loading && !error && items.length === 0 && (
         <p>No published items are currently listed.</p>
       )}
+
 
       <div className="public-grid">
         {items.map((item) => (
@@ -66,23 +73,20 @@ function CatalogSection({
                 title}
             </p>
 
+
             <h3>{item.title}</h3>
+
 
             <p>
               {item.description ||
                 "More information will be added to this listing."}
             </p>
 
+
             <p className="public-price">
               {getPriceLabel(item)}
             </p>
 
-            {item.access_type === "rent" && (
-              <p className="public-detail">
-                Wallet rentals provide 7 days of access.
-                Check the purchase details before paying.
-              </p>
-            )}
 
             <button
               className="public-button"
@@ -98,6 +102,7 @@ function CatalogSection({
   );
 }
 
+
 export default function PublicSite({
   onLogin,
   businessName = "Sivilization",
@@ -106,35 +111,28 @@ export default function PublicSite({
   privacyUrl = "",
   refundsUrl = "",
 }) {
-  const [films, setFilms] = useState([]);
   const [games, setGames] = useState([]);
-  const [products, setProducts] = useState([]);
+  const [products, setProducts] = [];
+
 
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState({
-    films: false,
     games: false,
     products: false,
   });
 
+
   useEffect(() => {
     let active = true;
+
 
     async function loadCatalogue() {
       setLoading(true);
 
-      try {
-        const [filmResult, gameResult, productResult] =
-          await Promise.all([
-            supabase
-              .from("films")
-              .select(
-                "id,title,description,genre,access_type,price_cents",
-              )
-              .eq("is_published", true)
-              .order("created_at", { ascending: false })
-              .limit(12),
 
+      try {
+        const [gameResult, productResult] =
+          await Promise.all([
             supabase
               .from("games")
               .select(
@@ -143,6 +141,7 @@ export default function PublicSite({
               .eq("is_published", true)
               .order("created_at", { ascending: false })
               .limit(12),
+
 
             supabase
               .from("products")
@@ -154,11 +153,10 @@ export default function PublicSite({
               .limit(12),
           ]);
 
+
         if (!active) return;
 
-        setFilms(
-          filmResult.error ? [] : filmResult.data || [],
-        );
+
         setGames(
           gameResult.error ? [] : gameResult.data || [],
         );
@@ -166,19 +164,17 @@ export default function PublicSite({
           productResult.error ? [] : productResult.data || [],
         );
 
+
         setErrors({
-          films: Boolean(filmResult.error),
           games: Boolean(gameResult.error),
           products: Boolean(productResult.error),
         });
 
-        if (filmResult.error) {
-          console.error("Public films:", filmResult.error);
-        }
 
         if (gameResult.error) {
           console.error("Public games:", gameResult.error);
         }
+
 
         if (productResult.error) {
           console.error("Public products:", productResult.error);
@@ -186,9 +182,9 @@ export default function PublicSite({
       } catch (error) {
         console.error("Public catalogue failed:", error);
 
+
         if (active) {
           setErrors({
-            films: true,
             games: true,
             products: true,
           });
@@ -198,18 +194,22 @@ export default function PublicSite({
       }
     }
 
+
     loadCatalogue();
+
 
     return () => {
       active = false;
     };
   }, []);
 
+
   const policyLinks = [
     { label: "Terms of Service", href: termsUrl },
     { label: "Privacy Policy", href: privacyUrl },
     { label: "Refund Policy", href: refundsUrl },
   ].filter((link) => link.href);
+
 
   return (
     <div className="public-site">
@@ -221,13 +221,16 @@ export default function PublicSite({
           font-family: inherit;
         }
 
+
         .public-site * {
           box-sizing: border-box;
         }
 
+
         .public-site a {
           color: #93c5fd;
         }
+
 
         .public-header,
         .public-main,
@@ -236,6 +239,7 @@ export default function PublicSite({
           margin: 0 auto;
           padding: 24px;
         }
+
 
         .public-header {
           display: flex;
@@ -246,12 +250,14 @@ export default function PublicSite({
           border-bottom: 1px solid #263449;
         }
 
+
         .public-brand {
           color: #f8fafc !important;
           font-size: 1.35rem;
           font-weight: 700;
           text-decoration: none;
         }
+
 
         .public-nav,
         .public-actions,
@@ -262,9 +268,11 @@ export default function PublicSite({
           gap: 16px;
         }
 
+
         .public-nav a {
           text-decoration: none;
         }
+
 
         .public-button {
           display: inline-flex;
@@ -281,21 +289,25 @@ export default function PublicSite({
           cursor: pointer;
         }
 
+
         .public-button-secondary {
           background: transparent;
           border-color: #53647c;
         }
+
 
         .public-hero {
           padding: 64px 0;
           max-width: 850px;
         }
 
+
         .public-hero h1 {
           margin: 12px 0 20px;
           font-size: clamp(2rem, 6vw, 3.8rem);
           line-height: 1.1;
         }
+
 
         .public-hero p,
         .public-section p,
@@ -304,14 +316,17 @@ export default function PublicSite({
           color: #bcc9dc;
         }
 
+
         .public-section {
           padding: 32px 0;
           scroll-margin-top: 20px;
         }
 
+
         .public-section-heading {
           margin-bottom: 24px;
         }
+
 
         .public-section h2 {
           color: #f8fafc;
@@ -319,12 +334,14 @@ export default function PublicSite({
           margin-bottom: 10px;
         }
 
+
         .public-grid {
           display: grid;
           grid-template-columns:
             repeat(auto-fit, minmax(min(260px, 100%), 1fr));
           gap: 20px;
         }
+
 
         .public-card {
           display: flex;
@@ -336,11 +353,13 @@ export default function PublicSite({
           overflow-wrap: anywhere;
         }
 
+
         .public-card h3 {
           color: #f8fafc;
           font-size: 1.25rem;
           margin: 8px 0;
         }
+
 
         .public-category {
           color: #93c5fd !important;
@@ -348,18 +367,22 @@ export default function PublicSite({
           font-size: .85rem;
         }
 
+
         .public-price {
           color: #f8fafc !important;
           font-weight: 700;
         }
 
+
         .public-detail {
           font-size: .875rem;
         }
 
+
         .public-card .public-button {
           margin-top: auto;
         }
+
 
         .public-info {
           padding: 24px;
@@ -368,16 +391,19 @@ export default function PublicSite({
           background: #101d30;
         }
 
+
         .public-footer {
           border-top: 1px solid #263449;
           margin-top: 32px;
         }
+
 
         .public-site button:focus-visible,
         .public-site a:focus-visible {
           outline: 3px solid #93c5fd;
           outline-offset: 4px;
         }
+
 
         @media (max-width: 600px) {
           .public-header,
@@ -386,22 +412,25 @@ export default function PublicSite({
             padding: 18px;
           }
 
+
           .public-hero {
             padding: 40px 0;
           }
         }
       `}</style>
 
+
       <header className="public-header">
         <a className="public-brand" href="#home">
           {businessName}
         </a>
 
+
         <nav className="public-nav" aria-label="Public navigation">
-          <a href="#films">Films</a>
           <a href="#games">Games</a>
           <a href="#products">Products</a>
           <a href="#contact">Contact</a>
+
 
           <button
             className="public-button"
@@ -413,22 +442,27 @@ export default function PublicSite({
         </nav>
       </header>
 
+
       <main className="public-main" id="home">
         <section className="public-hero">
           <p>WELCOME TO {businessName.toUpperCase()}</p>
 
-          <h1>Explore films, games, and digital products.</h1>
+
+          <h1>Download and play independent games.</h1>
+
 
           <p>
-            Browse our published catalogue and prices without
-            creating an account. Sign in to purchase eligible
-            items, manage your wallet, and access your library.
+            Browse downloadable Windows and Android games and
+            digital products. Sign in to purchase eligible items,
+            manage your wallet, and access your library.
           </p>
 
+
           <div className="public-actions">
-            <a className="public-button" href="#films">
-              Explore the catalogue
+            <a className="public-button" href="#games">
+              Explore games
             </a>
+
 
             <button
               className="public-button public-button-secondary"
@@ -440,37 +474,27 @@ export default function PublicSite({
           </div>
         </section>
 
+
         <section className="public-section">
           <div className="public-info">
-            <h2>How purchases work</h2>
+            <h2>How game purchases work</h2>
+
 
             <p>
-              Prices and access types are shown on each listing.
-              Film purchases and rentals are different:
-              rentals provide time-limited viewing access.
-              Subscription-only films require an eligible
-              active membership.
+              Each game listing shows its access type and price.
+              Depending on the listing, a game may be delivered as
+              a private download or through an external link.
             </p>
 
+
             <p>
-              Games may be delivered as downloads or external
-              links, depending on the listing. Review each
-              product’s description and purchase details before
-              paying. Sign-in is required for purchases and
-              account-specific content.
+              Review each product’s description and purchase
+              details before paying. Sign-in is required for
+              purchases and account-specific content.
             </p>
           </div>
         </section>
 
-        <CatalogSection
-          id="films"
-          title="Films"
-          description="Browse published films and their listed access options."
-          items={films}
-          error={errors.films}
-          loading={loading}
-          onLogin={onLogin}
-        />
 
         <CatalogSection
           id="games"
@@ -482,6 +506,7 @@ export default function PublicSite({
           onLogin={onLogin}
         />
 
+
         <CatalogSection
           id="products"
           title="Products"
@@ -492,9 +517,11 @@ export default function PublicSite({
           onLogin={onLogin}
         />
 
+
         <section id="contact" className="public-section">
           <div className="public-info">
             <h2>Contact and support</h2>
+
 
             {supportEmail ? (
               <p>
@@ -515,10 +542,12 @@ export default function PublicSite({
         </section>
       </main>
 
+
       <footer className="public-footer">
         <p>
           © {new Date().getFullYear()} {businessName}
         </p>
+
 
         <nav
           className="public-footer-links"
