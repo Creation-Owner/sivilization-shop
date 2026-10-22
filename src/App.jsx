@@ -3,6 +3,8 @@ import { supabase } from "./supabaseClient";
 import "./App.css";
 
 
+import MyProductsSection from "./components/MyProductsSection";
+import AdminProductStatusSection from "./components/AdminProductStatusSection";
 import PublicSite from "./components/PublicSite";
 import HomeSection from "./components/HomeSection";
 import GamesSection from "./components/GamesSection";
@@ -19,13 +21,6 @@ import SubscriptionsSection from "./components/SubscriptionsSection";
 import SubscriptionStudioPage from "./components/SubscriptionStudioPage";
 
 
-// Films & media are temporarily hidden while the payment provider
-// reviews the site. Do not delete MediaSection or FilmDetailsPage;
-// they can be restored later.
-// import MediaSection from "./components/MediaSection";
-// import FilmDetailsPage from "./components/FilmDetailsPage";
-
-
 const NAV_ITEMS = [
   { id: "Home", label: "Home" },
   { id: "Games", label: "Games" },
@@ -34,6 +29,7 @@ const NAV_ITEMS = [
   { id: "Wallet", label: "Wallet" },
   { id: "Cart", label: "Cart" },
   { id: "Library", label: "Library" },
+  { id: "MyProducts", label: "My Products" },
 ];
 
 
@@ -41,6 +37,7 @@ const OWNER_NAV_ITEMS = [
   { id: "Owner", label: "Owner" },
   { id: "ProductStudio", label: "Product Studio" },
   { id: "SubscriptionStudio", label: "Subscription Studio" },
+  { id: "ProductFulfillment", label: "Product fulfillment" },
 ];
 
 
@@ -113,20 +110,16 @@ function AuthPage() {
           "success",
         );
       } else {
-        const { error } =
-          await supabase.auth.signInWithPassword({
-            email: normalizedEmail,
-            password,
-          });
+        const { error } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
 
 
         if (error) throw error;
       }
     } catch (error) {
-      showMessage(
-        error?.message || "Authentication failed.",
-        "error",
-      );
+      showMessage(error?.message || "Authentication failed.", "error");
     } finally {
       setBusy(false);
     }
@@ -148,11 +141,10 @@ function AuthPage() {
 
 
     try {
-      const { error } =
-        await supabase.auth.resetPasswordForEmail(
-          normalizedEmail,
-          { redirectTo: window.location.origin },
-        );
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        normalizedEmail,
+        { redirectTo: window.location.origin },
+      );
 
 
       if (error) throw error;
@@ -185,9 +177,7 @@ function AuthPage() {
 
 
         <h1 id="auth-title">
-          {mode === "signup"
-            ? "Create your account"
-            : "Welcome back"}
+          {mode === "signup" ? "Create your account" : "Welcome back"}
         </h1>
 
 
@@ -218,9 +208,7 @@ function AuthPage() {
             id="auth-password"
             type="password"
             autoComplete={
-              mode === "signup"
-                ? "new-password"
-                : "current-password"
+              mode === "signup" ? "new-password" : "current-password"
             }
             minLength={8}
             value={password}
@@ -312,9 +300,7 @@ function AppShell({ user }) {
 
 
   const email = user.email || "";
-  const username = email
-    ? email.split("@")[0]
-    : "Sivilization user";
+  const username = email ? email.split("@")[0] : "Sivilization user";
 
 
   useEffect(() => {
@@ -346,9 +332,7 @@ function AppShell({ user }) {
 
         setIsAdmin(false);
         setIsOwner(false);
-        setRoleError(
-          error?.message || "Could not load account role.",
-        );
+        setRoleError(error?.message || "Could not load account role.");
       } finally {
         if (alive) setRoleLoading(false);
       }
@@ -392,18 +376,12 @@ function AppShell({ user }) {
         }
 
 
-        if (
-          !cancelled &&
-          currentRequest === requestVersion
-        ) {
+        if (!cancelled && currentRequest === requestVersion) {
           setWalletBalance(Number(data.wallet_balance_cents));
           setWalletError("");
         }
       } catch (error) {
-        if (
-          !cancelled &&
-          currentRequest === requestVersion
-        ) {
+        if (!cancelled && currentRequest === requestVersion) {
           setWalletBalance(null);
           setWalletError(
             error?.message || "Could not load wallet balance.",
@@ -422,10 +400,7 @@ function AppShell({ user }) {
 
     return () => {
       cancelled = true;
-      window.removeEventListener(
-        "wallet-updated",
-        loadWalletBalance,
-      );
+      window.removeEventListener("wallet-updated", loadWalletBalance);
       window.removeEventListener("focus", loadWalletBalance);
     };
   }, [user.id]);
@@ -449,8 +424,7 @@ function AppShell({ user }) {
 
         setCartCount(
           (data || []).reduce(
-            (total, item) =>
-              total + (Number(item.quantity) || 0),
+            (total, item) => total + (Number(item.quantity) || 0),
             0,
           ),
         );
@@ -514,8 +488,9 @@ function AppShell({ user }) {
       : `Wallet: ${formatCurrency(walletBalance)}`;
 
 
-  const showSearch =
-    ["Games", "Shop", "Library"].includes(activeSection);
+  const showSearch = ["Games", "Shop", "Library"].includes(
+    activeSection,
+  );
 
 
   return (
@@ -678,6 +653,14 @@ function AppShell({ user }) {
 
                 <button
                   type="button"
+                  onClick={() => navigate("MyProducts")}
+                >
+                  My Products
+                </button>
+
+
+                <button
+                  type="button"
                   onClick={() => navigate("Settings")}
                 >
                   Settings
@@ -725,16 +708,6 @@ function AppShell({ user }) {
       )}
 
 
-      {activeSection === "Media" && (
-        <section className="content-section">
-          <div className="empty-state">
-            <h2>Unavailable</h2>
-            <p>This section is temporarily unavailable.</p>
-          </div>
-        </section>
-      )}
-
-
       {activeSection === "Games" && (
         <GamesSection search={search} />
       )}
@@ -777,6 +750,9 @@ function AppShell({ user }) {
       {activeSection === "Library" && (
         <LibrarySection search={search} />
       )}
+
+
+      {activeSection === "MyProducts" && <MyProductsSection />}
 
 
       {activeSection === "Profile" && (
@@ -842,11 +818,24 @@ function AppShell({ user }) {
         )}
 
 
+      {activeSection === "ProductFulfillment" && isOwner && (
+        <AdminProductStatusSection />
+      )}
+
+
+      {activeSection === "ProductFulfillment" &&
+        !roleLoading &&
+        !isOwner && (
+          <AccessRequired title="Owner access required">
+            Only the website owner can update product fulfillment
+            statuses.
+          </AccessRequired>
+        )}
+
+
       <footer className="app-footer">
         <span>© {new Date().getFullYear()} Sivilization</span>
-        <span>
-          Games, products, and memberships in one place.
-        </span>
+        <span>Games, products, and memberships in one place.</span>
       </footer>
     </main>
   );
@@ -946,10 +935,7 @@ export default function App() {
 
   if (session) {
     return (
-      <AppShell
-        key={session.user.id}
-        user={session.user}
-      />
+      <AppShell key={session.user.id} user={session.user} />
     );
   }
 

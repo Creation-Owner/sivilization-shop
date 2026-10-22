@@ -1232,6 +1232,17 @@ export default function FilmStudioPage({ onBack }) {
                         Edit
                       </button>
 
+                      {import.meta.env.VITE_PADDLE_ENVIRONMENT === "sandbox" &&
+                      game.access_type === "paid" && (
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => testSandboxPurchase(game)}
+                        >
+                          Test sandbox purchase
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         disabled={
